@@ -33,6 +33,15 @@ defmodule Ezagent.World.ErrorCodeTest do
       assert code.trigger == {:error, :unauthorized}
       assert code.category == :permission
     end
+
+    test "generation_timeout clearly describes a model timeout" do
+      code = ErrorCode.lookup("agent_generation_timeout")
+
+      assert code.trigger == {:error, :generation_timeout}
+      assert code.category == :availability
+      assert code.message.what =~ "超时"
+      assert code.message.impact =~ "重新发送"
+    end
   end
 
   describe "lookup/1" do

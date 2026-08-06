@@ -2,7 +2,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   @moduledoc """
   The hello Phase-0 vertical slice, end to end on the substrate (no live LLM):
 
-      App.ensure_app (public_view session + joined orchestrator front desk)
+      App.ensure_app (public_view session + reusable LLM declaration)
         → TurnDriver.drive(session, spec)            # the page chokepoint
         → Behavior.Surface.put_version + approve     # via turn.compose/settle
         → ExternalFeed.snapshot(session, anon)       # what the anon visitor sees
@@ -21,14 +21,13 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias Ezagent.Workspace
   alias Ezagent.ActionSet.KindBase
   alias Ezagent.Socialware.{AnonAdmission, ExternalFeed}
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
     :ok = EzagentPluginHello.TestCatalog.import!()
-    # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
-    # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
-    # seeds it, but that write is outside this DataCase sandbox transaction (and the
-    # ETS cache can be flushed by another test) — so seed the roles here (idempotent).
+    # `ensure_app` resolves the LLM through the role-as-data RecipeRegistry. Boot
+    # seeds it outside this DataCase sandbox transaction, so seed the role here too.
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     # The `hello.llm` role materializes as a "curl" flavor agent — the flavor is
     # boot-registered by the curl_agent plugin's `agent_flavors/0`, so it must be
@@ -116,29 +115,9 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert "hello-coupling-boundary" in classes
   end
 
-  test "ensure_app joins the orchestrator front desk without minting a within-session cap", ctx do
-    orchestrator = ctx.orchestrator
-
-    assert %{^orchestrator => %{role_name: "front-desk"}} =
-             Ezagent.Orchestrator.Tools.read_members(ctx.session)
-
-    {:ok, %{caps: caps}} = Ezagent.Kind.read(ctx.orchestrator, :identity, spawn: :never)
-
-    refute Enum.any?(caps, fn
-             %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
-               URI.to_string(s) == URI.to_string(ctx.session)
-
-             _ ->
-               false
-           end)
-
-    assert {:error, :unauthorized} =
-             Ezagent.Orchestrator.Tools.preflight_within_session_cap(
-               orchestrator,
-               caps,
-               ctx.session,
-               :any
-             )
+  test "ensure_app uses the Session sender and has no front-desk member", ctx do
+    assert ctx.orchestrator == ctx.session
+    assert :error = EzagentPluginHello.Members.role_uri(ctx.session, "front-desk")
   end
 
   test "ensure_app spawns the session through the socialware install set", ctx do
@@ -208,16 +187,56 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert artifact.kind == "hello_source"
   end
 
-  test "INV-CC ②: a session with the curl llm member is created even with NO credential source" do
-    # A fresh workspace in this test env has no DeepSeek credential source
-    # provisioned — this is exactly the deployment shape `credential_optional`
-    # (Task 1) exists to keep working.
+  test "a keyless session defers the curl LLM without blocking Session ingress" do
+    # A fresh workspace in this test env has no DeepSeek credential source.
     ws = "hello-e2e-llm-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
     assert {:ok, session_uri, _orch} = App.ensure_app(ws, "llm-keyless")
-    # llm curl member materialized (keyless — did not crash session-create).
-    assert {:ok, %URI{}} = EzagentPluginHello.Members.role_uri(session_uri, "llm")
+    assert :error = EzagentPluginHello.Members.role_uri(session_uri, "llm")
+
+    assert [
+             %{
+               role_name: "llm",
+               status: :pending_auth,
+               connection: {:api_key, %{provider: "deepseek"}}
+             }
+           ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
+  end
+
+  test "consecutive sessions require separate LLM agents and API-key setup" do
+    ws = "hello-e2e-isolated-auth-#{System.unique_integer([:positive])}"
+    {:ok, _ws_pid} = Workspace.create(ws, %{})
+    admin = Ezagent.Entity.User.admin_uri()
+    caps = Ezagent.Identity.list_caps_for(admin)
+
+    assert {:ok, first_session, _front_desk} = App.ensure_app(ws, "first")
+    assert [%{role_name: "llm", status: :pending_auth}] = AgentAdmission.list(first_session)
+    assert {:ok, first_attempt} = AgentAdmission.begin(first_session, "llm", admin, caps)
+    first_agent = Ezagent.URI.new!(first_attempt.provisional_agent_uri)
+
+    put_api_key!(first_agent, "deepseek", "test-session-local-key")
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(
+               first_session,
+               "llm",
+               first_attempt.attempt_id,
+               {admin, caps}
+             )
+
+    assert {:ok, ^first_agent} = EzagentPluginHello.Members.role_uri(first_session, "llm")
+    assert is_nil(Ezagent.Credential.UserDefaultSource.resolve(URI.to_string(admin), ws, "curl"))
+
+    assert {:ok, second_session, _front_desk} = App.ensure_app(ws, "second")
+    assert :error = EzagentPluginHello.Members.role_uri(second_session, "llm")
+    assert [%{role_name: "llm", status: :pending_auth}] = AgentAdmission.list(second_session)
+
+    assert {:ok, second_attempt} = AgentAdmission.begin(second_session, "llm", admin, caps)
+    second_agent = Ezagent.URI.new!(second_attempt.provisional_agent_uri)
+
+    refute second_agent == first_agent
+    assert is_nil(Ezagent.Credential.UserDefaultSource.resolve(URI.to_string(admin), ws, "curl"))
   end
 
   # --- helpers ---------------------------------------------------------------
@@ -262,6 +281,26 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   defp text_of(message) do
     Map.get(message.body, "text") || Map.get(message.body, :text)
+  end
+
+  defp put_api_key!(agent_uri, provider, key) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(agent_uri, :identity, :put_api_key)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
+    assert {:ok, %{ok: true, provider: ^provider}} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               origin: :trusted_internal,
+               target: target,
+               mode: :call,
+               args: %{provider: provider, key: key},
+               ctx: %{
+                 caller: admin,
+                 authenticated_principal: admin,
+                 caps: MapSet.new([cap]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
   end
 
   defp seed_text(%{"children" => children, "props" => props}) do

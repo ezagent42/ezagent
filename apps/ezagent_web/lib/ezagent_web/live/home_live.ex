@@ -8,10 +8,10 @@ defmodule EzagentWeb.HomeLive do
   - **Authenticated AND ≥1 session in the caller's workspace** →
     redirect `/sessions` (the default app surface, unchanged from Phase 8).
   - **Authenticated AND no sessions in the caller's workspace** → render
-    the first-login wizard inline. Operator picks a short name (default
-    "main") and submits; we call `Ezagent.Workspace.create_session/3`
-    (which spawns + binds workspace + joins admin) and then push_navigate
-    to `/sessions`.
+    the first-login wizard inline. The operator picks a short name and one
+    caller-managed authenticated LLM Agent with a matching flavor, then creates
+    a Hello session
+    through `Ezagent.Workspace.create_session/3`.
 
   ## W0 tenant-isolation (2026-07-03)
 
@@ -43,17 +43,17 @@ defmodule EzagentWeb.HomeLive do
   wizard is the production creation path for the default session,
   and every session in the system flows through the same API.
 
-  ## Why a single-input wizard
+  ## Why the wizard requires an existing LLM agent
 
-  Allen's brief 2026-05-20: "99% of users just press one button". The
-  form pre-fills "main" so the default flow is literally one click.
-  Power users can pick a different name. No workspace picker yet —
-  the wizard's session is bound to the admin's structural workspace
-  (`workspace://system` per SPEC #324), so the single admin flow
-  doesn't need a picker. Tenant onboarding goes through a separate
-  magic-link flow that creates the tenant's own workspace.
+  Hello reuses an authenticated agent instead of creating a hidden replacement.
+  The flavor field therefore drives a dependent selector populated by
+  `EzagentPluginHello.ReusableLlmAgent`; creation stays disabled until an
+  eligible selection is explicit. No workspace picker is needed because the
+  wizard uses the same selected workspace as the `/sessions` surface.
   """
   use EzagentWeb, :live_view
+
+  alias EzagentPluginHello.{App, ReusableLlmAgent}
 
   @impl true
   def mount(_params, session, socket) do
@@ -83,8 +83,10 @@ defmodule EzagentWeb.HomeLive do
     # non-workspace scope (`:any` / malformed) or an unauthorized caller
     # fails closed to `[]` so the operator sees the wizard — never a
     # cross-tenant redirect, a private-session existence leak, or a crash.
+    workspace_uri = landing_workspace_uri(session, entity_uri)
+
     sessions =
-      case landing_workspace_uri(session, entity_uri) do
+      case workspace_uri do
         %URI{scheme: "workspace"} = workspace_uri ->
           Ezagent.Workspace.WorkspaceReads.sessions(entity_uri, workspace_uri)
 
@@ -94,15 +96,28 @@ defmodule EzagentWeb.HomeLive do
 
     case sessions do
       [] ->
-        # No sessions yet — render the wizard.
+        flavors = App.llm_flavors()
+        flavor = List.first(flavors) || ""
+        candidates = reusable_llm_candidates(entity_uri, workspace_uri, flavor)
+
         socket =
           socket
           |> assign(:current_entity_uri, entity_uri)
           |> assign(:current_entity_uri_str, URI.to_string(entity_uri))
+          |> assign(:current_workspace_uri, workspace_uri)
+          |> assign(:llm_flavors, flavors)
+          |> assign_wizard_candidates(candidates, "")
           |> assign(:flash_error, nil)
           |> assign(
             :form,
-            to_form(%{"short_name" => "main", "with_echo" => "true"}, as: "wizard")
+            to_form(
+              %{
+                "short_name" => "main",
+                "llm_flavor" => flavor,
+                "llm_agent_uri" => ""
+              },
+              as: "wizard"
+            )
           )
 
         {:ok, socket, layout: false}
@@ -114,62 +129,86 @@ defmodule EzagentWeb.HomeLive do
   end
 
   @impl true
+  def handle_event("select_llm_flavor", %{"wizard" => params}, socket) do
+    flavor = Map.get(params, "llm_flavor", "")
+
+    candidates =
+      reusable_llm_candidates(
+        socket.assigns.current_entity_uri,
+        socket.assigns.current_workspace_uri,
+        flavor
+      )
+
+    selected_agent_uri =
+      params
+      |> Map.get("llm_agent_uri", "")
+      |> keep_if_candidate(candidates)
+
+    form_params = %{
+      "short_name" => Map.get(params, "short_name", "main"),
+      "llm_flavor" => flavor,
+      "llm_agent_uri" => selected_agent_uri
+    }
+
+    {:noreply,
+     socket
+     |> assign(:form, to_form(form_params, as: "wizard"))
+     |> assign_wizard_candidates(candidates, selected_agent_uri)
+     |> assign(:flash_error, nil)}
+  end
+
+  @impl true
   def handle_event("create_default_session", %{"wizard" => params}, socket) do
     short_name = params |> Map.get("short_name", "main") |> String.trim()
-    with_echo? = params |> Map.get("with_echo") |> truthy?()
+    flavor = params |> Map.get("llm_flavor", "") |> String.trim()
+    agent_uri_input = params |> Map.get("llm_agent_uri", "") |> String.trim()
+    creator_uri = socket.assigns.current_entity_uri
+    workspace_uri = socket.assigns.current_workspace_uri
 
-    if short_name == "" do
-      {:noreply, assign(socket, :flash_error, gettext("Session name is required."))}
-    else
-      creator_uri = socket.assigns.current_entity_uri
+    result =
+      with :ok <- require_session_name(short_name),
+           {:ok, agent_uri} <- parse_llm_agent_uri(agent_uri_input),
+           {:ok, _candidate} <-
+             ReusableLlmAgent.validate(creator_uri, workspace_uri, flavor, agent_uri),
+           :ok <- ensure_bootstrap_workspace(workspace_uri, creator_uri),
+           target <- Ezagent.URI.with_action(workspace_uri, :workspace, :create_session),
+           {:ok, create_cap} <-
+             Ezagent.Cap.issue_for_action(
+               {:admin, Ezagent.Entity.User.admin_uri()},
+               creator_uri,
+               target
+             ) do
+        agent_uri_string = URI.to_string(agent_uri)
 
-      # SPEC #366 (Allen 2026-05-26) — create_session now requires an
-      # explicit `:template_name`. The first-login
-      # wizard's job is to create the bootstrap session with the
-      # canonical `session://default/<workspace>/main` URI shape, so
-      # we pass `template_name: "default"` literally. This preserves
-      # the one-button flow Allen specified in 2026-05-20 ("99% of
-      # users just press one button") — the wizard isn't a
-      # template-selection surface; it's the platform's own boot
-      # ceremony. Tenant-customized session creation happens in
-      # AdminLive (`/sessions` → "+ New"), where the dropdown is
-      # mandatory.
-      workspace_uri = Ezagent.Capability.workspace_of(creator_uri)
-
-      result =
-        with :ok <- ensure_bootstrap_workspace(workspace_uri, creator_uri),
-             target <- Ezagent.URI.with_action(workspace_uri, :workspace, :create_session),
-             {:ok, create_cap} <-
-               Ezagent.Cap.issue_for_action(
-                 {:admin, Ezagent.Entity.User.admin_uri()},
-                 creator_uri,
-                 target
-               ) do
-          Ezagent.Workspace.create_session(
-            workspace_uri,
-            %{short_name: short_name, template_name: "default"},
-            %{
-              caller: creator_uri,
-              authenticated_principal: creator_uri,
-              caps: MapSet.new([create_cap])
+        Ezagent.Workspace.create_session(
+          workspace_uri,
+          %{
+            short_name: short_name,
+            template_name: "hello",
+            template_options: %{
+              "llm_flavor" => flavor,
+              "llm_agent_uri" => agent_uri_string
             }
-          )
-        end
-
-      case result do
-        {:ok, %{session_uri: session_uri}} ->
-          if with_echo?, do: join_echo_agent(session_uri, creator_uri)
-
-          {:noreply, push_navigate(socket, to: "/sessions")}
-
-        {:error, reason} ->
-          {:noreply,
-           assign(
-             socket,
-             :flash_error,
-             gettext("Create failed: %{reason}", reason: inspect(reason))
-           )}
+          },
+          %{
+            caller: creator_uri,
+            authenticated_principal: creator_uri,
+            caps: MapSet.new([create_cap])
+          }
+        )
       end
+
+    case result do
+      {:ok, %{session_uri: %URI{}}} ->
+        {:noreply, push_navigate(socket, to: "/sessions")}
+
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           create_error_message(reason)
+         )}
     end
   end
 
@@ -194,51 +233,79 @@ defmodule EzagentWeb.HomeLive do
 
   defp ensure_bootstrap_workspace(_workspace_uri, _creator_uri), do: :ok
 
-  defp truthy?("true"), do: true
-  defp truthy?("on"), do: true
-  defp truthy?(true), do: true
-  defp truthy?(_), do: false
+  defp require_session_name(""), do: {:error, :session_name_required}
+  defp require_session_name(_short_name), do: :ok
 
-  # Phase 8c PR-J follow-up (Allen 2026-05-20) — wizard optionally
-  # seeds the default demo agent into the new session for first-time
-  # demo. P2: this is now `py_default` (the echo.py py-agent that
-  # replaced the deleted echo default agent). Its :receive runs echo.py and
-  # emits a chat reply, so the user gets a working ping-pong loop out
-  # of the box.
-  defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = Ezagent.URI.agent(:system, :py_default)
-    # Make sure the default agent Kind is live. `ensure_started/1` is
-    # idempotent AND self-heals py_default's Python subprocess from the
-    # installed script (`Behavior.PyAgent.activate/2`) — the seed runs
-    # in the py plugin's `after_boot/0`; this is a defensive rehydrate
-    # in case the Kind was snapshot-restored stale (or the boot seed
-    # failed because uv was cold).
-    _ = Ezagent.LocalRuntime.ensure_started(echo_uri)
+  defp create_error_message(:llm_agent_required),
+    do: gettext("Please select an authenticated LLM Agent with a matching flavor.")
 
-    target = Ezagent.URI.with_action(session_uri, :session, :join)
+  defp create_error_message(:session_name_required),
+    do: gettext("Please enter a session name.")
 
-    _ =
-      with {:ok, signed_cap} <-
-             Ezagent.Cap.issue_for_action(
-               {:admin, Ezagent.Entity.User.admin_uri()},
-               caller_uri,
-               target
-             ) do
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :cast,
-          args: %{member: echo_uri},
-          ctx: %{
-            caller: caller_uri,
-            authenticated_principal: caller_uri,
-            caps: MapSet.new([signed_cap]),
-            reply: :ignore
-          },
-          origin: :authenticated_external
-        })
-      end
+  defp create_error_message(:invalid_llm_agent_uri),
+    do: gettext("The selected LLM Agent is invalid. Please choose another one.")
 
-    :ok
+  defp create_error_message({:invalid_reusable_llm_agent, :not_found}),
+    do: gettext("The selected LLM Agent no longer exists. Please choose another one.")
+
+  defp create_error_message({:invalid_reusable_llm_agent, :unauthorized}),
+    do: gettext("You are not allowed to use the selected LLM Agent.")
+
+  defp create_error_message({:invalid_reusable_llm_agent, {:flavor_mismatch, _flavor}}),
+    do: gettext("The selected LLM Agent does not match the chosen flavor.")
+
+  defp create_error_message(
+         {:invalid_reusable_llm_agent, {:ineligible_credential_status, _status}}
+       ),
+       do: gettext("The selected LLM Agent is not authenticated or its credentials have expired.")
+
+  defp create_error_message(_reason),
+    do: gettext("Session creation failed. Check the LLM Agent configuration and try again.")
+
+  defp parse_llm_agent_uri(""), do: {:error, :llm_agent_required}
+
+  defp parse_llm_agent_uri(agent_uri) do
+    case Ezagent.URI.parse(agent_uri) do
+      {:ok, %URI{} = parsed} -> {:ok, parsed}
+      _ -> {:error, :invalid_llm_agent_uri}
+    end
+  end
+
+  defp reusable_llm_candidates(
+         %URI{} = caller,
+         %URI{scheme: "workspace"} = workspace_uri,
+         flavor
+       )
+       when is_binary(flavor) do
+    case ReusableLlmAgent.list(caller, workspace_uri, flavor) do
+      {:ok, candidates} -> candidates
+      {:error, _reason} -> []
+    end
+  end
+
+  defp reusable_llm_candidates(_caller, _workspace_uri, _flavor), do: []
+
+  defp keep_if_candidate(selected_agent_uri, candidates) when is_binary(selected_agent_uri) do
+    if Enum.any?(candidates, fn %{agent_uri: agent_uri} ->
+         URI.to_string(agent_uri) == selected_agent_uri
+       end) do
+      selected_agent_uri
+    else
+      ""
+    end
+  end
+
+  defp assign_wizard_candidates(socket, candidates, selected_agent_uri) do
+    options =
+      Enum.map(candidates, fn %{agent_uri: agent_uri} ->
+        agent_uri_string = URI.to_string(agent_uri)
+        {agent_uri_string, agent_uri_string}
+      end)
+
+    socket
+    |> assign(:llm_candidates, candidates)
+    |> assign(:llm_candidate_options, options)
+    |> assign(:submit_disabled?, selected_agent_uri == "")
   end
 
   # HomeLive lives outside the `:require_entity` live_session, so its public
@@ -318,77 +385,83 @@ defmodule EzagentWeb.HomeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="min-h-screen flex items-center justify-center bg-background px-4 text-foreground">
-      <div class="w-full max-w-md">
-        <div class="text-center mb-8">
-          <h1 class="text-2xl font-semibold text-foreground">
-            {gettext("Welcome to ezagent")}
-          </h1>
-          <p class="mt-2 text-sm text-muted-foreground">
-            {gettext("Let's set up your first session.")}
+    <Layouts.app flash={@flash}>
+      <section class="mx-auto w-full max-w-lg text-foreground" aria-labelledby="hello-wizard-title">
+        <header class="mb-8 text-center">
+          <p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-primary">
+            {gettext("Hello")}
           </p>
-        </div>
+          <h1 id="hello-wizard-title" class="text-3xl font-semibold tracking-tight text-foreground">
+            {gettext("Create your first session")}
+          </h1>
+          <p class="mt-3 text-sm leading-6 text-muted-foreground">
+            {gettext("Choose an authenticated LLM agent you already manage.")}
+          </p>
+        </header>
 
-        <div class="bg-card rounded-[var(--radius)] shadow-[var(--shadow-card)] p-6">
+        <div class="rounded-[var(--radius)] border border-border bg-card p-6 shadow-[var(--shadow-card)]">
           <.form
             for={@form}
             id="first-session-wizard"
+            phx-change="select_llm_flavor"
             phx-submit="create_default_session"
-            class="space-y-4"
+            class="space-y-5"
           >
             <div>
-              <label
-                for="wizard_short_name"
-                class="block text-sm font-medium text-foreground mb-1"
-              >
-                {gettext("Session short name")}
-              </label>
-              <input
+              <.input
+                field={@form[:short_name]}
                 type="text"
-                name="wizard[short_name]"
-                id="wizard_short_name"
-                value={@form[:short_name].value}
+                label={gettext("Session short name")}
                 placeholder="main"
                 autocomplete="off"
-                class="w-full px-3 py-2 text-sm bg-card border border-input rounded-full text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p class="mt-1 text-xs text-muted-foreground">
-                {gettext("Creates a system workspace session named")}
-                <span class="font-mono" id="short-name-preview">{@form[:short_name].value}</span>.
+              <p class="text-xs leading-5 text-muted-foreground">
+                {gettext("The Hello session will be named")}
+                <span class="font-mono text-foreground" id="short-name-preview">
+                  {@form[:short_name].value}
+                </span>.
               </p>
             </div>
 
-            <%!-- Phase 8c PR-J follow-up (Allen 2026-05-20) — opt-in
-                  echo demo seed so the first "send → see reply" flow
-                  works end-to-end on a fresh DB. --%>
-            <label class="flex items-start gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                name="wizard[with_echo]"
-                value="true"
-                checked={@form[:with_echo].value in ["true", "on", true]}
-                class="mt-0.5 rounded border-input accent-primary"
-              />
-              <span class="text-xs text-foreground">
-                {gettext("Include echo demo agent")}
-                <span class="block text-muted-foreground">
-                  {gettext("Adds")}
-                  {gettext(
-                    "Adds the default echo agent as a session member so you can verify the chat round-trip works."
-                  )}
-                </span>
-              </span>
-            </label>
+            <.input
+              field={@form[:llm_flavor]}
+              type="select"
+              label={gettext("LLM flavor")}
+              options={Enum.map(@llm_flavors, &{&1, &1})}
+            />
 
-            <div :if={@flash_error} class="text-sm text-destructive">
+            <div>
+              <.input
+                field={@form[:llm_agent_uri]}
+                type="select"
+                label={gettext("Reusable LLM agent")}
+                prompt={gettext("Select an eligible agent")}
+                options={@llm_candidate_options}
+                disabled={@llm_candidates == []}
+              />
+
+              <div
+                :if={@llm_candidates == []}
+                id="hello-llm-empty"
+                class="rounded-[var(--radius)] border border-dashed border-border bg-muted/40 px-4 py-3 text-xs leading-5 text-muted-foreground"
+              >
+                {gettext(
+                  "No eligible agent is available for this flavor. Create or authenticate an LLM Agent with the matching flavor, then return here."
+                )}
+              </div>
+            </div>
+
+            <div :if={@flash_error} id="hello-wizard-error" class="text-sm text-destructive">
               {@flash_error}
             </div>
 
             <button
+              id="first-session-submit"
               type="submit"
-              class="w-full px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-full shadow-[var(--shadow-soft)] hover:bg-primary/90 transition-colors"
+              disabled={@submit_disabled?}
+              class="w-full rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground shadow-[var(--shadow-soft)] transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {gettext("Create session")}
+              {gettext("Create Hello session")}
             </button>
           </.form>
         </div>
@@ -396,8 +469,8 @@ defmodule EzagentWeb.HomeLive do
         <p class="mt-6 text-center text-xs text-muted-foreground">
           {gettext("Signed in as")} <span class="font-mono">{@current_entity_uri_str}</span>
         </p>
-      </div>
-    </div>
+      </section>
+    </Layouts.app>
     """
   end
 end

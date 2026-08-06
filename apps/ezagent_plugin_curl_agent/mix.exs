@@ -30,7 +30,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :inets, :ssl],
+      extra_applications: [:logger],
       mod: {EzagentPluginCurlAgent.Application, []},
       # Plugin authoring contract SPEC §3.2 — names the plugin
       # contract module for the :ezagent_plugin_check gate.
@@ -43,6 +43,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
 
   defp deps do
     [
+      {:req, "~> 0.5"},
       {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # User Kind lives here; CurlAgent dispatches identity/get_api_key

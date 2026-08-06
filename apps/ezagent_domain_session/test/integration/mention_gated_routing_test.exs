@@ -30,6 +30,9 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   alias Ezagent.{Invocation, Message, RoutingRegistry}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Routing.Resolver
+  alias Ezagent.Socialware.{Definition, DefinitionRegistry}
+  alias EzagentDomainInstanceMessage.SessionCreator.Materializer
+  alias EzagentDomainInstanceMessage.SessionIngressTestBehavior
 
   setup do
     # `chat.receive` dispatches are observed via the `invocations` audit
@@ -74,24 +77,39 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
   end
 
   # Spawn a real Session bound to workspace://team-alpha + return its URI.
-  defp spawn_session do
+  defp spawn_session(opts \\ []) do
     session = URI.new!("session://team-alpha/default/#{u("mg-sess")}")
-    {:ok, _} = Ezagent.SpawnRegistry.spawn(session)
+
+    if Keyword.get(opts, :with_ingress, false) do
+      {:ok, _} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+          uri: session,
+          behaviors: Ezagent.Entity.Session.chat_behaviors() ++ [SessionIngressTestBehavior]
+        })
+    else
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(session)
+    end
+
     :ok = Ezagent.WorkspaceRegistry.bind(session, URI.new!("workspace://team-alpha"))
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session) end)
     session
   end
 
-  defp join(session, member) do
+  defp join_member(session, member, role_name \\ nil) do
     target = URI.new!("#{URI.to_string(session)}?action=session.join")
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, member)
+
+    args =
+      if is_binary(role_name),
+        do: %{member: member, role_name: role_name},
+        else: %{member: member}
 
     :ok =
       Invocation.dispatch(%Invocation{
         origin: :trusted_internal,
         target: target,
         mode: :cast,
-        args: %{member: member},
+        args: args,
         ctx: %{
           caller: member,
           authenticated_principal: member,
@@ -169,6 +187,99 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     )
   end
 
+  defp materialize_ingress(session, sender) do
+    workspace = URI.new!("workspace://team-alpha")
+    name = u("mention-ingress")
+
+    ingress = %{
+      behavior: SessionIngressTestBehavior,
+      action: :capture_inbound,
+      protected_roles: ["llm"]
+    }
+
+    {:ok, definition} =
+      Definition.new(%{
+        name: name,
+        bases: [SessionIngressTestBehavior],
+        roles: [
+          %{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "echo"},
+          %{role_name: "helper", fill: :agent, recipe: "hello.llm", flavor: "echo"}
+        ],
+        ingress: ingress
+      })
+
+    {:ok, _object} =
+      DefinitionRegistry.write_definition(definition,
+        workspace_uri: workspace,
+        caller_workspace_uri: workspace,
+        actor_uri: sender
+      )
+
+    template_uri = URI.new!("template://team-alpha/session/#{u("ingress-template")}")
+
+    assert :ok =
+             Materializer.materialize_template_declaration(
+               session,
+               template_uri,
+               %{installs: [name]}
+             )
+
+    assert %{ingress: ^ingress} =
+             Ezagent.Entity.Session.read_template_working_copy(session)
+
+    ingress
+  end
+
+  defp await_ingress(session, message_id, attempts \\ 100)
+
+  defp await_ingress(_session, message_id, 0) do
+    flunk("ingress did not capture message #{message_id}")
+  end
+
+  defp await_ingress(session, message_id, attempts) do
+    case Ezagent.Kind.read(session, :session_ingress_test, spawn: :never) do
+      {:ok, %{last_message_id: ^message_id} = slice} ->
+        slice
+
+      _ ->
+        Process.sleep(10)
+        await_ingress(session, message_id, attempts - 1)
+    end
+  end
+
+  defp assert_exact_ingress_cap(slice, session) do
+    workspace = URI.new!("workspace://team-alpha")
+
+    assert slice.last_caller == session
+    assert slice.last_reply == :ignore
+
+    assert slice.last_cap == %{
+             count: 1,
+             kind: :session,
+             behavior: SessionIngressTestBehavior,
+             action: :capture_inbound,
+             instance: session,
+             workspace_uri: workspace,
+             grantee_uri: session,
+             target_signed?: true
+           }
+  end
+
+  defp await_delivery_idle(attempts \\ 100)
+
+  defp await_delivery_idle(0), do: flunk("session delivery queue did not become idle")
+
+  defp await_delivery_idle(attempts) do
+    if Ezagent.Session.DeliveryQueue.idle?() do
+      if Process.whereis(Ezagent.Audit.Writer), do: send(Ezagent.Audit.Writer, :flush)
+      Process.sleep(150)
+      :ok
+    else
+      Process.sleep(10)
+      await_delivery_idle(attempts - 1)
+    end
+  end
+
   test "§6.2 — no mention: User member gets chat.receive, Agent member gets none" do
     install_default_rule_table()
     session = spawn_session()
@@ -183,9 +294,9 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_member, "echo")
 
-    join(session, sender)
-    join(session, user_member)
-    join(session, agent_member)
+    join_member(session, sender)
+    join_member(session, user_member)
+    join_member(session, agent_member)
 
     user_before = receive_dispatch_count(user_member)
     agent_before = receive_dispatch_count(agent_member)
@@ -219,8 +330,8 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
 
-    join(session, sender)
-    join(session, user_member)
+    join_member(session, sender)
+    join_member(session, user_member)
 
     :ok = Ezagent.Notifications.subscribe_slice_change(user_member)
 
@@ -242,7 +353,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     sender = URI.new!("entity://team-alpha/user/#{u("sender")}")
     {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
-    join(session, sender)
+    join_member(session, sender)
 
     :ok =
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, SessionBehavior.session_events_topic(session))
@@ -266,9 +377,9 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(mentioned, "echo")
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(other, "echo")
 
-    join(session, sender)
-    join(session, mentioned)
-    join(session, other)
+    join_member(session, sender)
+    join_member(session, mentioned)
+    join_member(session, other)
 
     mentioned_before = receive_dispatch_count(mentioned)
     other_before = receive_dispatch_count(other)
@@ -282,6 +393,64 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
            "an un-mentioned member agent must get NO chat.receive"
   end
 
+  test "declared ingress receives @protected-role input without direct agent.receive" do
+    install_default_rule_table()
+    session = spawn_session(with_ingress: true)
+
+    sender = URI.new!("entity://team-alpha/user/#{u("ingress-sender")}")
+    llm = URI.new!("entity://team-alpha/agent/echo_#{u("protected-llm")}")
+
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+    {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(llm, "echo")
+
+    join_member(session, sender)
+    join_member(session, llm, "llm")
+    materialize_ingress(session, sender)
+
+    receive_before = receive_dispatch_count(llm)
+
+    message = dispatch_send(session, sender, "@llm handle this", [llm])
+
+    assert %{count: 1, last_session_uri: ^session} =
+             ingress_slice = await_ingress(session, message.id)
+
+    assert_exact_ingress_cap(ingress_slice, session)
+    await_delivery_idle()
+
+    assert receive_dispatch_count(llm) == receive_before,
+           "a protected-role mention must enter through ingress only"
+  end
+
+  test "declared ingress preserves direct mention delivery for non-protected roles" do
+    install_default_rule_table()
+    session = spawn_session(with_ingress: true)
+
+    sender = URI.new!("entity://team-alpha/user/#{u("ingress-sender")}")
+    helper = URI.new!("entity://team-alpha/agent/echo_#{u("unprotected-helper")}")
+
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+    {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(helper, "echo")
+
+    join_member(session, sender)
+    join_member(session, helper, "helper")
+    materialize_ingress(session, sender)
+
+    receive_before = receive_dispatch_count(helper)
+
+    message = dispatch_send(session, sender, "@helper handle this", [helper])
+
+    assert %{count: 1, last_session_uri: ^session} =
+             ingress_slice = await_ingress(session, message.id)
+
+    assert_exact_ingress_cap(ingress_slice, session)
+    await_delivery_idle()
+
+    assert receive_dispatch_count(helper) > receive_before,
+           "a non-protected mention must keep ordinary agent.receive delivery"
+  end
+
   test "§6.5 — cascade: N echo agents, no-mention seed → zero agent dispatches" do
     install_default_rule_table()
     session = spawn_session()
@@ -289,13 +458,13 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     sender = URI.new!("entity://team-alpha/user/#{u("sender")}")
     {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
-    join(session, sender)
+    join_member(session, sender)
 
     agents =
       for _ <- 1..5 do
         a = URI.new!("entity://team-alpha/agent/echo_#{u("cascade")}")
         {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(a, "echo")
-        join(session, a)
+        join_member(session, a)
         a
       end
 

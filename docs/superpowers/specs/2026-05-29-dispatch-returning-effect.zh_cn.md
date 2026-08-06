@@ -1,7 +1,7 @@
 # SPEC: `:dispatch_returning` 效果 + 关闭 §11 Gate 3/6
 
 **日期**: 2026-05-29
-**状态**: 实施中
+**状态**: 已实施（实现记录见 §12）
 **关闭**: SPEC #445 §11 Gate 3 + Gate 6
 **相关**: `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` §4.4(效果语法)
 **LOC 分析**: `docs/notes/2026-05-28-migration-loc-deadcode-analysis.md`
@@ -41,9 +41,9 @@
 
 这是 Gate 3 的结构性修复 — 今天回退到 `Invocation.dispatch/1` 的处理器现在可以将相同的意图表达为类型化的效果。
 
-### 2b. 在 `Ezagent.Behavior` 上重新导出 `data_owner_of/2`
+### 2b. 在面向作者的 `Ezagent.ActionSet` 上重新导出 `data_owner_of/2`
 
-添加 `Ezagent.Behavior.data_owner_of(behavior, instance)` 作为 `Ezagent.CapabilityRegistry.data_owner_of/2` 的薄委托。Behavior 作者调用新的公共表面;现有的 `CapabilityRegistry` 实现不变。grep gate(针对 `apps/*/lib/ezagent/behavior/*.ex` 中的 `CapabilityRegistry\.`)被满足,因为调用点现在读为 `Ezagent.Behavior.data_owner_of(...)`。
+添加 `Ezagent.ActionSet.data_owner_of(behavior, instance)` 作为面向作者的委托。该委托由 `Ezagent.ActionSet.Introspection` 实现；Behavior 作者调用 ActionSet 的公共辅助函数，现有的 `CapabilityRegistry` 实现保持不变。grep gate（针对 `apps/*/lib/ezagent/behavior/*.ex` 中的 `CapabilityRegistry\.`）被满足，因为调用点现在读为 `Ezagent.ActionSet.data_owner_of(...)`。
 
 这是 Gate 6 的结构性修复。不需要新的 dispatch 语法,因为调用是纯同步内省,不是跨 Kind 的交互。
 
@@ -187,7 +187,7 @@ end
 
 `check_grant_authorized/2` 在 `handle_grant_cap/2` 处理器体内运行,所以 returning-effect 模式**可以**应用 — 但底层调用是一次纯回调内省(无 Kind dispatch,无状态,无副作用)。将其包装在 `:dispatch_returning` 中只是仪式而无架构价值。
 
-迁移: 根据 §2b,在 `Ezagent.Behavior` 上把 `data_owner_of/2` 重新导出为薄委托,并把调用点换成 `Ezagent.Behavior.data_owner_of(...)`。这满足 grep gate(禁止"直接调用 CapabilityRegistry"),而无需通过 runtime 强制一次假的 dispatch。
+迁移: 根据 §2b,在 `Ezagent.ActionSet` 上把 `data_owner_of/2` 重新导出为薄委托,并把调用点换成 `Ezagent.ActionSet.data_owner_of(...)`。这满足 grep gate（禁止“直接调用 CapabilityRegistry”），而无需通过 runtime 强制一次假的 dispatch。
 
 ---
 
@@ -242,7 +242,24 @@ grep -c 'Ezagent\.CapabilityRegistry\.' \
 
 ---
 
-## 12. 范围外
+## 12. 实现记录
+
+本 SPEC 已在当前 PR 线实施完成，且已按本文档中的契约完成验证：
+
+- `apps/ezagent_actor/lib/ezagent/behavior/effects.ex` 已接受并分桶 `{:dispatch_returning, %Ezagent.Cmd{}, bind_as: name}` 效果，保持它与 `:effect_returning` 效果的声明顺序，并要求提供 `bind_as`。
+- `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex` 通过 `Ezagent.Router.dispatch/1` 补全并执行 returning dispatch，完成 ref 替换；失败时在下游 bucket 执行前以 `{:error, {:dispatch_returning_failed, name, reason}}` 中止。
+- `apps/ezagent_actor/lib/ezagent/behavior.ex` 通过 `ActionSet.Introspection` 暴露面向作者的 `Ezagent.ActionSet.data_owner_of/2` 委托。
+- `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` 已改用该公共辅助函数，移除 Behavior 对 `CapabilityRegistry` 的直接依赖。
+- `behavior_test.exs` 与 `runtime_new_contract_dispatch_test.exs` 已覆盖成功绑定、ref 替换、混合 returning effect、必需的 `bind_as`、失败传播以及下游效果中止。
+
+实现验证命令：
+
+```bash
+mix test apps/ezagent_actor/test/ezagent/behavior_test.exs \
+  apps/ezagent_core/test/ezagent/kind/runtime_new_contract_dispatch_test.exs
+```
+
+## 13. 范围外
 
 - 当 `:dispatch_returning` 中的 Cmd `reply: :ignore` 时发出警告的静态检查(`@before_compile`)。将来的硬化,不阻塞本 PR。
 - 把 `:effect_returning` 重写为 `:dispatch_returning` 的特例。它们共享 bucket 逻辑但建模不同概念(计算 vs 跨 Kind dispatch)。

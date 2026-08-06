@@ -2,13 +2,20 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
   @moduledoc """
   Deterministic Hello operations hosted by the Hello Session.
 
-  Hello only materializes two agents: the chat-facing `front-desk` and the
-  flavor-backed `llm`. Building, answering, sharing, publishing, and Kanban
-  delegation are session-scoped actions; they do not need independent agent
-  identities, recipes, or membership edges.
+  Hello materializes only the flavor-backed `llm`. Inbound routing, building,
+  answering, sharing, publishing, and Kanban delegation are Session-scoped
+  actions; they do not need relay-agent identities or membership edges.
   """
 
   use Ezagent.Lifecycle
+
+  action(:route_inbound,
+    args: %{message: :map, session_uri: :uri},
+    returns: %{},
+    caps: [:route_inbound],
+    modes: [:cast],
+    description: "Route an inbound Hello message under the Session ownership policy"
+  )
 
   action(:rebuild,
     args: %{session_uri: :string, instruction: :string},
@@ -53,6 +60,27 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
   @impl Ezagent.Lifecycle
   def create(_args), do: {:ok, %{}}
 
+  @doc false
+  def handle_route_inbound(
+        %{
+          message: %Ezagent.Message{sender: %URI{} = sender} = message,
+          session_uri: %URI{} = session_uri
+        },
+        _ctx
+      ) do
+    case Map.get(message.body, :text) || Map.get(message.body, "text") do
+      text when is_binary(text) and text != "" ->
+        _ = EzagentPluginHello.Router.route(session_uri, text, sender, message.ref_id)
+
+      _ ->
+        :ok
+    end
+
+    {:ok, %{}, []}
+  end
+
+  def handle_route_inbound(_args, _ctx), do: {:ok, %{}, []}
+
   @doc """
   Fire-and-forget page (re)generation for this Hello session. No-op for a
   blank instruction or an unresolvable session_uri — never crash the
@@ -70,15 +98,13 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
   def handle_rebuild(_args, _ctx), do: {:ok, %{}, []}
 
   @doc """
-  Route a read-only question about the current Hello page to the concierge
-  (front-desk agent), without changing the page. No-op for a blank text or an
-  unresolvable session_uri/front-desk.
+  Route a read-only question about the current Hello page to the concierge,
+  without changing the page. The answer is authored by the Session.
   """
   def handle_answer(%{session_uri: session, text: text}, _ctx)
       when is_binary(session) and is_binary(text) and text != "" do
-    with {:ok, session_uri} <- parse_session_uri(session),
-         {:ok, actor_uri} <- front_desk_uri(session_uri) do
-      _ = EzagentPluginHello.Generator.concierge_start(session_uri, text, actor_uri)
+    with {:ok, session_uri} <- parse_session_uri(session) do
+      _ = concierge_start(session_uri, text)
     end
 
     {:ok, %{}, []}
@@ -87,14 +113,12 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
   def handle_answer(_args, _ctx), do: {:ok, %{}, []}
 
   @doc """
-  Post the public Hello session URL into the conversation via the front-desk
-  agent. No-op for an unresolvable session_uri/front-desk.
+  Post the public Hello session URL into the conversation as the Session.
   """
   def handle_share(%{session_uri: session}, _ctx) when is_binary(session) and session != "" do
-    with {:ok, session_uri} <- parse_session_uri(session),
-         {:ok, actor_uri} <- front_desk_uri(session_uri) do
+    with {:ok, session_uri} <- parse_session_uri(session) do
       share_url = "/socialware/chat?session_uri=#{URI.to_string(session_uri)}"
-      _ = EzagentPluginHello.TurnDriver.say(session_uri, actor_uri, "Public URL: #{share_url}")
+      _ = EzagentPluginHello.TurnDriver.say(session_uri, session_uri, "Public URL: #{share_url}")
     end
 
     {:ok, %{}, []}
@@ -135,14 +159,10 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
   def handle_delegate_to_kanban(_args, _ctx), do: {:ok, %{}, []}
 
   @doc """
-  Caps data-ownership: admin-only Behavior, no per-entity owner (matches the
-  sibling `Ezagent.ActionSet.HelloOrchestrator.data_owner/1` boilerplate).
+  Caps data-ownership: admin-only Behavior, no per-entity owner.
   """
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
-
-  defp front_desk_uri(session_uri),
-    do: EzagentPluginHello.Members.role_uri(session_uri, "front-desk")
 
   defp generator_start(%URI{} = session_uri, instruction) when is_binary(instruction) do
     Application.get_env(
@@ -151,6 +171,15 @@ defmodule Ezagent.ActionSet.HelloSessionActions do
       &EzagentPluginHello.Generator.start/2
     )
     |> then(& &1.(session_uri, instruction))
+  end
+
+  defp concierge_start(%URI{} = session_uri, text) when is_binary(text) do
+    Application.get_env(
+      :ezagent_plugin_hello,
+      :concierge_start,
+      &EzagentPluginHello.Generator.concierge_start/3
+    )
+    |> then(& &1.(session_uri, text, session_uri))
   end
 
   defp parse_session_uri(value) do

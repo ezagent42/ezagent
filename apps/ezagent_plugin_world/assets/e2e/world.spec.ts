@@ -80,6 +80,10 @@ test("sessions interaction emits an admitted world:dispatch", async ({page}) => 
     event: "world:dispatch",
     payload: {action: "sessions.join", args: {session_uri: sessionsFixtureUri}},
   })
+
+  await page.evaluate(() => window.__WORLD_E2E__.transitionTo("conversation"))
+  await expect(page.locator('[data-world-component="conversation"]')).toBeVisible()
+  await expect(page.locator('[data-world-component="sessions_table"]')).toHaveCount(0)
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
@@ -114,6 +118,134 @@ test("conversation composer emits chat.send", async ({page}) => {
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
+test("credential admission uses public dispatch and joins the returned provisional member", async ({page}) => {
+  const attemptId = "attempt-e2e-llm"
+  const provisionalAgentUri = "entity://acme/agent/hello-llm-provisional"
+
+  await openFixture(page, "conversation")
+
+  const admission = page.locator('[data-world-agent-admission="llm"]')
+  await expect(admission).toBeVisible()
+  await admission.getByRole("button", {name: "Configure API key"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.begin",
+      args: {session_uri: conversationFixtureUri, role_name: "llm"},
+    },
+  })
+
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) =>
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "authenticating",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "api_key", label: "Configure API key", provider: "deepseek"},
+          },
+        ],
+      }),
+    {attemptId, provisionalAgentUri},
+  )
+
+  await admission.getByLabel("API key *").fill("sk-e2e-admission")
+  await admission.getByRole("button", {name: "Save key"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "agent.api_key.put",
+      args: {agent_uri: provisionalAgentUri, provider: "deepseek", key: "sk-e2e-admission"},
+    },
+  })
+
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) => {
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "joined",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "api_key", label: "Configure API key", provider: "deepseek"},
+          },
+        ],
+      })
+      window.__WORLD_E2E__.emit("members:update", {
+        members: [{uri: provisionalAgentUri, display_name: provisionalAgentUri, kind: "agent"}],
+      })
+    },
+    {attemptId, provisionalAgentUri},
+  )
+
+  await expect(admission).toHaveCount(0)
+  await page.getByRole("button", {name: "展开成员面板"}).click()
+  await expect(page.getByText(provisionalAgentUri, {exact: true})).toBeVisible()
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
+test("PTY admission recovery reopens and checks the existing candidate", async ({page}) => {
+  const attemptId = "attempt-e2e-pty"
+  const provisionalAgentUri = "entity://acme/agent/codex-provisional"
+
+  await openFixture(page, "conversation")
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) =>
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "authenticating",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "pty", label: "Connect Codex"},
+          },
+        ],
+      }),
+    {attemptId, provisionalAgentUri},
+  )
+
+  const admission = page.locator('[data-world-agent-admission="llm"]')
+  await admission.getByRole("button", {name: "继续登录"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.pty.open",
+      args: {session_uri: conversationFixtureUri, agent: provisionalAgentUri},
+    },
+  })
+
+  await page.evaluate(() => window.__WORLD_E2E__.clearEvents())
+  await admission.getByRole("button", {name: "检查连接状态"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.reconcile",
+      args: {session_uri: conversationFixtureUri},
+    },
+  })
+
+  const events = await recordedEvents(page)
+  expect(events).not.toContainEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.begin",
+      args: {session_uri: conversationFixtureUri, role_name: "llm"},
+    },
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
 test("registered plugin interaction emits an admitted kanban action", async ({page}) => {
   await openFixture(page, "kanban")
   await page.getByLabel("Access Token").fill("fixture-token")
@@ -140,7 +272,9 @@ declare global {
   interface Window {
     __WORLD_E2E__: {
       clearEvents: () => void
+      contract: typeof generatedFixtures
       contractViolation: () => string | null
+      emit: (event: string, payload: Record<string, unknown>) => void
       events: RecordedEvent[]
       transitionTo: (name: string) => void
     }

@@ -4,25 +4,43 @@ defmodule Ezagent.World.ErrorRendererTest do
   alias Ezagent.World.{ErrorCode, ErrorRenderer}
 
   @credential_code ErrorCode.lookup("agent_credential_missing")
+  @llm_uri Ezagent.URI.new!("entity://system/agent/llm-1")
 
   describe "render/2 — Layer 1 (user can fix)" do
-    test "returns layer 1 card with fix link" do
-      card = ErrorRenderer.render(@credential_code, user_can_fix: true)
+    test "returns layer 1 card linked to the actual repair agent" do
+      card =
+        ErrorRenderer.render(@credential_code,
+          user_can_fix: true,
+          fix_target_uri: @llm_uri
+        )
+
       assert card.layer == 1
       assert card.what == "Agent 未配置凭证"
       assert card.impact =~ "无法调用 AI 模型"
-      assert card.fix_link != nil
+
+      assert card.fix_link ==
+               "/identities/agents/#{URI.encode_www_form(URI.to_string(@llm_uri))}/api-keys"
+
       assert card.fix_owner_name == nil
       assert card.notify_action == nil
+    end
+
+    test "does not emit a misleading direct link without a repair target" do
+      card = ErrorRenderer.render(@credential_code, user_can_fix: true)
+
+      assert card.layer != 1
+      assert card.fix_link == nil
     end
   end
 
   describe "render/2 — Layer 2 (user cannot fix, owner exists)" do
     test "returns layer 2 card with notify action" do
-      card = ErrorRenderer.render(@credential_code,
-        user_can_fix: false,
-        fix_owner_display_name: "陈瑞华"
-      )
+      card =
+        ErrorRenderer.render(@credential_code,
+          user_can_fix: false,
+          fix_owner_display_name: "陈瑞华"
+        )
+
       assert card.layer == 2
       assert card.what == "Agent 未配置凭证"
       assert card.fix_owner_name == "陈瑞华"
@@ -42,13 +60,14 @@ defmodule Ezagent.World.ErrorRendererTest do
     end
   end
 
-  describe "fix_path_to_url/1" do
-    test "agent_keys_page maps to URL" do
-      assert ErrorRenderer.fix_path_to_url(:agent_keys_page) =~ "/api-keys"
+  describe "fix_path_to_url/2" do
+    test "agent_keys_page maps to the encoded target agent URL" do
+      assert ErrorRenderer.fix_path_to_url(:agent_keys_page, @llm_uri) ==
+               "/identities/agents/#{URI.encode_www_form(URI.to_string(@llm_uri))}/api-keys"
     end
 
     test "unknown path returns nil" do
-      assert ErrorRenderer.fix_path_to_url(:unknown) == nil
+      assert ErrorRenderer.fix_path_to_url(:unknown, @llm_uri) == nil
     end
   end
 end

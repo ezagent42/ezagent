@@ -83,6 +83,47 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
       assert {:noreply, out} = dispatch("chat.send", %{})
       assert out.assigns.last_dispatch_status == "error:unsupported_action"
     end
+
+    test "credential admission actions belong to the conversation dispatch family" do
+      conversation_actions = Ezagent.World.DispatchContract.actions(:conversation)
+
+      assert "session.agent_admission.begin" in conversation_actions
+      assert "session.agent_admission.complete" in conversation_actions
+      assert "session.agent_admission.cancel" in conversation_actions
+      assert "session.agent_admission.reconcile" in conversation_actions
+    end
+  end
+
+  describe "credential admission session binding" do
+    test "reconcile routes malformed session input to the admission handler" do
+      assert {:noreply, out} =
+               dispatch("session.agent_admission.reconcile", %{
+                 "session_uri" => "not-a-session-uri"
+               })
+
+      assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+
+    test "begin refuses a client request for a session other than the one on screen" do
+      current = URI.new!("session://team-alpha/default/current-#{uniq()}")
+      other = URI.new!("session://team-alpha/default/other-#{uniq()}")
+
+      socket = socket_for() |> Phoenix.Component.assign(:current_session_uri, current)
+
+      assert {:noreply, out} =
+               dispatch(
+                 "session.agent_admission.begin",
+                 %{
+                   "session_uri" => URI.to_string(other),
+                   "role_name" => "llm",
+                   "flavor" => "client-must-not-select-this",
+                   "source_uri" => "entity://team-alpha/agent/forged"
+                 },
+                 socket
+               )
+
+      assert out.assigns.last_dispatch_status == "error:session_not_current"
+    end
   end
 
   # #224 — three conversation handlers were dispatched by the React client but
@@ -122,6 +163,54 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
                })
 
       assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+  end
+
+  describe "API-key admission binding" do
+    @session URI.new!("session://team-alpha/default/api-key-admission")
+    @candidate URI.new!("entity://team-alpha/agent/api-key-candidate")
+
+    defp api_key_admission(overrides \\ %{}) do
+      Map.merge(
+        %{
+          role_name: "llm",
+          attempt_id: "attempt-1",
+          provisional_agent_uri: URI.to_string(@candidate),
+          status: :authenticating,
+          connection: {:api_key, %{provider: "openai", label: "配置 API key"}}
+        },
+        overrides
+      )
+    end
+
+    test "only an active exact candidate with its declared provider may complete" do
+      assert WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission()
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "anthropic",
+               api_key_admission()
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission(%{status: :failed})
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission(%{attempt_id: nil})
+             )
     end
   end
 

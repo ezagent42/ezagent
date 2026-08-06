@@ -12,6 +12,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Capability, Message, MessageStore}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.InterfaceValidator
   alias Ezagent.Routing.{Matcher, Receiver, Trace}
   import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5, signed_invocation!: 2]
@@ -528,6 +529,38 @@ defmodule Ezagent.ActionSet.ChatTest do
                {:no_adapter, "native"},
                {:heal_failed, :no_sandbox_respawn_state}
              ]
+    end
+  end
+
+  describe "protected ingress roles" do
+    test "filters only recipients whose live member role is protected" do
+      llm = URI.new!("entity://team-alpha/agent/llm-protected")
+      helper = URI.new!("entity://team-alpha/agent/helper-unprotected")
+
+      recipients = [{llm, %{rule_id: "mentions"}}, {helper, %{rule_id: "mentions"}}]
+
+      members = %{
+        llm => %{online: true, role_name: "llm"},
+        helper => %{online: true, role_name: "helper"}
+      }
+
+      assert Delivery.exclude_protected_role_recipients(recipients, members, ["llm"]) == [
+               {helper, %{rule_id: "mentions"}}
+             ]
+
+      assert Delivery.exclude_protected_role_recipients(recipients, members, []) == recipients
+    end
+
+    test "refuses a recursive session.send ingress before dispatch" do
+      session = URI.new!("session://team-alpha/default/recursive-ingress")
+      message = Message.new(URI.new!("entity://team-alpha/user/sender"), %{text: "hello"})
+
+      assert {:error, {:recursive_session_ingress, SessionBehavior, :send}} =
+               Delivery.dispatch_declared_ingress(session, message, %{
+                 behavior: SessionBehavior,
+                 action: :send,
+                 protected_roles: []
+               })
     end
   end
 

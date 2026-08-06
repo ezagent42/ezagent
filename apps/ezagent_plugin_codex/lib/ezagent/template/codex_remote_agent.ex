@@ -30,6 +30,9 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   def credential_relpaths, do: Ezagent.PluginCodex.Template.CodexAgent.credential_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter
+  defdelegate credential_connection(opts), to: Ezagent.PluginCodex.Template.CodexAgent
+
+  @impl Ezagent.Agent.CredentialAdapter
   def secret_relpaths, do: Ezagent.PluginCodex.Template.CodexAgent.secret_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter
@@ -432,7 +435,9 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
       {:ok, :already_started, _pid, _receipt} ->
         {:ok, :already_started}
-      {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
+
+      {:error, reason} ->
+        {:error, {:agent_spawn_failed, reason}}
     end
   end
 

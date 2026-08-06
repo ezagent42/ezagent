@@ -7,6 +7,65 @@ defmodule Ezagent.Socialware.DefinitionTest do
   @view_mod Ezagent.ActionSet.Surface
 
   describe "roles field (P1 role-slot declaration)" do
+    test "normalizes credential admission declarations and defaults omitted agent roles" do
+      assert {:ok, definition} =
+               Definition.new(%{
+                 "name" => "hello",
+                 "roles" => [
+                   %{
+                     "role_name" => "llm",
+                     "fill" => "agent",
+                     "recipe" => "hello.llm",
+                     "flavor" => "codex",
+                     "credential_admission" => "before_session_join"
+                   },
+                   %{
+                     role_name: "helper",
+                     fill: :agent,
+                     recipe: "hello.helper",
+                     flavor: "curl"
+                   }
+                 ]
+               })
+
+      assert definition.roles == [
+               %{
+                 role_name: "llm",
+                 fill: :agent,
+                 recipe: "hello.llm",
+                 flavor: "codex",
+                 credential_admission: :before_session_join
+               },
+               %{
+                 role_name: "helper",
+                 fill: :agent,
+                 recipe: "hello.helper",
+                 flavor: "curl",
+                 credential_admission: :immediate
+               }
+             ]
+
+      assert {:ok, round_tripped} = definition |> Definition.body() |> Definition.new()
+      assert round_tripped.roles == definition.roles
+    end
+
+    test "rejects an invalid credential admission declaration" do
+      assert {:error,
+              {:invalid_socialware_definition_field, :credential_admission, "after_session_join"}} =
+               Definition.new(%{
+                 name: "hello",
+                 roles: [
+                   %{
+                     role_name: "llm",
+                     fill: :agent,
+                     recipe: "hello.llm",
+                     flavor: "codex",
+                     credential_admission: "after_session_join"
+                   }
+                 ]
+               })
+    end
+
     test "accepts agent recipe slots and human slots" do
       assert {:ok, definition} =
                Definition.new(%{
@@ -18,7 +77,13 @@ defmodule Ezagent.Socialware.DefinitionTest do
                })
 
       assert Map.get(definition, :roles) == [
-               %{role_name: "bot", fill: :agent, recipe: "hello-bot", flavor: "curl"},
+               %{
+                 role_name: "bot",
+                 fill: :agent,
+                 recipe: "hello-bot",
+                 flavor: "curl",
+                 credential_admission: :immediate
+               },
                %{role_name: "visitor", fill: :human}
              ]
     end
@@ -39,7 +104,13 @@ defmodule Ezagent.Socialware.DefinitionTest do
                })
 
       assert Map.get(definition, :roles) == [
-               %{role_name: "bot", fill: :agent, recipe: "hello-bot", flavor: "py"},
+               %{
+                 role_name: "bot",
+                 fill: :agent,
+                 recipe: "hello-bot",
+                 flavor: "py",
+                 credential_admission: :immediate
+               },
                %{role_name: "visitor", fill: :human}
              ]
     end
@@ -88,7 +159,8 @@ defmodule Ezagent.Socialware.DefinitionTest do
                  "role_name" => "bot",
                  "fill" => "agent",
                  "recipe" => "hello-bot",
-                 "flavor" => "curl"
+                 "flavor" => "curl",
+                 "credential_admission" => "immediate"
                }
              ]
 
@@ -210,6 +282,60 @@ defmodule Ezagent.Socialware.DefinitionTest do
                    agent_slot("source", operates: [operate_edge("target", behavior: Enum)]),
                    agent_slot("target")
                  ]
+               })
+    end
+  end
+
+  describe "ingress field" do
+    test "normalizes a declared ingress and round-trips it through body/1" do
+      attrs = %{
+        name: "ingress-definition",
+        roles: [%{role_name: "visitor", fill: :human}],
+        ingress: %{
+          behavior: Ezagent.ActionSet.Surface,
+          action: :approve,
+          protected_roles: ["visitor"]
+        }
+      }
+
+      assert {:ok, definition} = Definition.new(attrs)
+
+      assert definition.ingress == %{
+               behavior: Ezagent.ActionSet.Surface,
+               action: :approve,
+               protected_roles: ["visitor"]
+             }
+
+      assert {:ok, round_tripped} = definition |> Definition.body() |> Definition.new()
+      assert round_tripped.ingress == definition.ingress
+    end
+
+    test "rejects an unknown ingress behavior, action, or protected role" do
+      assert {:error, {:invalid_socialware_behavior, Enum}} =
+               Definition.new(%{
+                 name: "invalid-ingress-behavior",
+                 ingress: %{behavior: Enum, action: :approve, protected_roles: []}
+               })
+
+      assert {:error, {:invalid_socialware_ingress_action, Ezagent.ActionSet.Surface, "missing"}} =
+               Definition.new(%{
+                 name: "invalid-ingress-action",
+                 ingress: %{
+                   behavior: Ezagent.ActionSet.Surface,
+                   action: "missing",
+                   protected_roles: []
+                 }
+               })
+
+      assert {:error, {:invalid_socialware_ingress_protected_role, "missing"}} =
+               Definition.new(%{
+                 name: "invalid-ingress-role",
+                 roles: [%{role_name: "visitor", fill: :human}],
+                 ingress: %{
+                   behavior: Ezagent.ActionSet.Surface,
+                   action: :approve,
+                   protected_roles: ["missing"]
+                 }
                })
     end
   end

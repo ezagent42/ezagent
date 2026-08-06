@@ -221,6 +221,11 @@ defmodule EzagentPluginHello.Generator do
   @doc false
   @spec error_signal_reason(term()) :: term()
   def error_signal_reason({:no_api_key, _provider} = reason), do: reason
+  def error_signal_reason({:transport, :timeout}), do: :generation_timeout
+
+  def error_signal_reason({:http, status, _body}) when is_integer(status),
+    do: {:llm_configuration_invalid, status}
+
   def error_signal_reason(reason), do: {:generation_failed, reason}
 
   # Emit ONE "<label>…" line, then run the slow work inline. The client renders a
@@ -552,10 +557,6 @@ defmodule EzagentPluginHello.Generator do
       {:hello_completion, ^request_id, content} when is_binary(content) ->
         Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
         {:ok, %{content: content}}
-    after
-      120_000 ->
-        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
-        {:error, :llm_completion_timeout}
     end
   end
 
@@ -833,27 +834,8 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # Generated-page narration is emitted by the session's front-desk agent. The
-  # builder is a Session action, not an independently materialized member.
-  defp builder_uri(%URI{} = session_uri) do
-    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
-      {:ok, uri} -> uri
-      :error -> legacy_builder_uri(session_uri)
-    end
-  end
-
-  defp legacy_builder_uri(%URI{} = session_uri) do
-    ws = Ezagent.URI.workspace_name!(session_uri)
-
-    name =
-      session_uri
-      |> Map.get(:path, "")
-      |> to_string()
-      |> String.split("/", trim: true)
-      |> List.last()
-
-    Ezagent.URI.entity(ws, :agent, "hello_#{name}")
-  end
+  # Generated-page narration is Session-authored; no relay agent is materialized.
+  defp builder_uri(%URI{} = session_uri), do: session_uri
 
   # Console log of the @json-render data that ACTUALLY drives the page — the
   # validated spec landed on the Surface. This is the "what changed the page"

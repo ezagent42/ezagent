@@ -55,6 +55,41 @@ defmodule Ezagent.World.ConversationActions do
     end)
   end
 
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.begin",
+        %{"session_uri" => sid, "role_name" => role_name}
+      )
+      when is_binary(role_name) do
+    Ezagent.World.AgentAdmissionActions.begin(socket, sid, role_name)
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.complete",
+        %{"session_uri" => sid, "role_name" => role_name, "attempt_id" => attempt_id}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    Ezagent.World.AgentAdmissionActions.complete(socket, sid, role_name, attempt_id)
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.reconcile",
+        %{"session_uri" => sid}
+      ) do
+    Ezagent.World.AgentAdmissionActions.reconcile(socket, sid)
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.cancel",
+        %{"session_uri" => sid, "role_name" => role_name, "attempt_id" => attempt_id}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    Ezagent.World.AgentAdmissionActions.cancel(socket, sid, role_name, attempt_id)
+  end
+
   def handle_dispatch(socket, "session.invite", %{"session_uri" => sid, "member" => member})
       when is_binary(member) do
     with_session(socket, sid, &invite_member(socket, &1, member))
@@ -117,7 +152,7 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.pty.open", %{"session_uri" => sid, "agent" => agent})
       when is_binary(agent) do
-    with_session(socket, sid, &switch_to_pty(socket, &1, agent))
+    Ezagent.World.AgentAdmissionActions.open_pty(socket, sid, agent)
   end
 
   def handle_dispatch(socket, "session.orchestrator.restart", %{"session_uri" => sid}) do
@@ -329,7 +364,14 @@ defmodule Ezagent.World.ConversationActions do
                install_config
              ) do
           {:ok, create_template_name} ->
-            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
+            do_create_session(
+              socket,
+              workspace_uri,
+              caller,
+              short_name,
+              create_template_name,
+              install_config
+            )
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
@@ -353,13 +395,34 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp socialware_install_config(args) when is_map(args) do
-    case Map.get(args, "role_slots") do
-      role_slots when is_list(role_slots) -> %{"role_slots" => role_slots}
-      _ -> %{}
+    %{}
+    |> maybe_put_list(args, "role_slots")
+    |> maybe_put_binary(args, "llm_flavor")
+    |> maybe_put_binary(args, "llm_agent_uri")
+  end
+
+  defp maybe_put_list(config, args, key) do
+    case Map.get(args, key) do
+      value when is_list(value) -> Map.put(config, key, value)
+      _ -> config
     end
   end
 
-  defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+  defp maybe_put_binary(config, args, key) do
+    case Map.get(args, key) do
+      value when is_binary(value) and value != "" -> Map.put(config, key, value)
+      _ -> config
+    end
+  end
+
+  defp do_create_session(
+         socket,
+         workspace_uri,
+         caller,
+         short_name,
+         template_name,
+         install_config
+       ) do
     caller_caps = Ezagent.World.PresenterCaps.load(socket)
     create_session = &Ezagent.Workspace.create_session/3
 
@@ -376,7 +439,8 @@ defmodule Ezagent.World.ConversationActions do
            caller,
            short_name,
            template_name,
-           create_with_caller_caps
+           create_with_caller_caps,
+           install_config
          ) do
       {:ok, %URI{} = session_uri} ->
         # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
@@ -526,6 +590,26 @@ defmodule Ezagent.World.ConversationActions do
   def session_create_error_message(:unauthorized), do: "没有创建会话的权限"
   def session_create_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
 
+  def session_create_error_message(:llm_agent_required),
+    do: "请选择一个已认证且 flavor 匹配的 LLM Agent"
+
+  def session_create_error_message(:invalid_llm_agent_uri),
+    do: "所选 LLM Agent 无效，请重新选择"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, :not_found}),
+    do: "所选 LLM Agent 已不存在，请重新选择"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, :unauthorized}),
+    do: "你无权使用所选 LLM Agent"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, {:flavor_mismatch, _flavor}}),
+    do: "所选 LLM Agent 的 flavor 与当前选择不一致"
+
+  def session_create_error_message(
+        {:invalid_reusable_llm_agent, {:ineligible_credential_status, _status}}
+      ),
+      do: "所选 LLM Agent 尚未完成认证，或认证已过期"
+
   def session_create_error_message(reason) do
     if unsupported_claude_dev_channels?(reason) do
       "创建会话失败：当前 Claude Code 不支持 cc orchestrator 所需的开发通道参数，请升级 Claude Code 或改用 codex flavor。"
@@ -579,9 +663,36 @@ defmodule Ezagent.World.ConversationActions do
           {:ok, URI.t()} | {:error, term()}
   def create_session_result(workspace_uri, caller, short_name, template_name, create)
       when is_function(create, 3) do
+    create_without_options = fn target_workspace, args, ctx ->
+      create.(target_workspace, Map.delete(args, :template_options), ctx)
+    end
+
+    create_session_result(
+      workspace_uri,
+      caller,
+      short_name,
+      template_name,
+      create_without_options,
+      %{}
+    )
+  end
+
+  def create_session_result(
+        workspace_uri,
+        caller,
+        short_name,
+        template_name,
+        create,
+        template_options
+      )
+      when is_function(create, 3) and is_map(template_options) do
     case create.(
            workspace_uri,
-           %{short_name: short_name, template_name: template_name},
+           %{
+             short_name: short_name,
+             template_name: template_name,
+             template_options: template_options
+           },
            %{caller: caller, authenticated_principal: caller, caps: MapSet.new()}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
@@ -676,7 +787,7 @@ defmodule Ezagent.World.ConversationActions do
   """
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do
+  def switch_to_pty(socket, %URI{} = session_uri, agent_str) when is_binary(agent_str) do
     # `agent_str` is CLIENT input (the `session.pty.open` event's "agent" field),
     # so this is a full PTY read exit — it subscribes to the live output stream
     # and pushes liveness/phase. Without the gate any authenticated user could
@@ -688,18 +799,23 @@ defmodule Ezagent.World.ConversationActions do
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
         if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
-          # A session can retain an agent membership across a node restart while
-          # the agent's subprocess is cold. Opening an authorized terminal is
-          # the demand boundary: revive the Agent first so Sandbox.activate/2
-          # restores its PTY (or the unauthenticated Codex login PTY) before we
-          # subscribe and render the terminal surface.
-          case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
-            {:ok, _status} ->
-              subscribe_pty(agent_uri)
-              push_pty_view(socket, agent_uri)
+          if pty_target_in_session?(session_uri, agent_uri) do
+            # A session can retain an agent membership across a node restart while
+            # the agent's subprocess is cold. Opening an authorized terminal is
+            # the demand boundary: revive the Agent first so Sandbox.activate/2
+            # restores its PTY (or the unauthenticated Codex login PTY) before we
+            # subscribe and render the terminal surface.
+            case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
+              {:ok, _status} ->
+                subscribe_pty(agent_uri)
+                push_pty_view(socket, session_uri, agent_uri)
 
-            {:error, _reason} ->
-              {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
+              {:error, _reason} ->
+                {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
+            end
+          else
+            {:noreply,
+             assign(socket, :last_dispatch_status, "error:session_pty_target_unrelated")}
           end
         else
           {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
@@ -710,9 +826,29 @@ defmodule Ezagent.World.ConversationActions do
     end
   end
 
-  defp push_pty_view(socket, %URI{} = agent_uri) do
+  defp pty_target_in_session?(%URI{} = session_uri, %URI{} = agent_uri) do
+    agent_uri_str = URI.to_string(agent_uri)
+
+    Enum.any?(Ezagent.Entity.Session.session_member_uris(session_uri), fn member_uri ->
+      same_uri?(member_uri, agent_uri)
+    end) or
+      Enum.any?(
+        EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri),
+        fn admission ->
+          Map.fetch!(admission, :status) in [:authenticating, :materializing] and
+            Map.get(admission, :provisional_agent_uri) == agent_uri_str
+        end
+      )
+  end
+
+  defp push_pty_view(
+         %{assigns: %{current_entity_uri: caller}} = socket,
+         %URI{} = session_uri,
+         %URI{} = agent_uri
+       ) do
     {:noreply,
      push_world_state(socket, %{
+       "views" => ConversationData.session_views(session_uri, caller),
        "active_view" => "pty",
        "active_pty_agent_uri" => uri_string(agent_uri),
        "agent_uri" => uri_string(agent_uri),
@@ -1116,6 +1252,7 @@ defmodule Ezagent.World.ConversationActions do
       # user-facing surface).
       "unfilled_agent_role_slots" =>
         EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
+      "agent_admissions" => ConversationData.agent_admissions(session_uri),
       "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri)
     }
 
@@ -1190,7 +1327,8 @@ defmodule Ezagent.World.ConversationActions do
                   caller,
                   socket.assigns.current_workspace_uri,
                   members
-                )
+                ),
+              "agent_admissions" => ConversationData.agent_admissions(session_uri)
             })
           else
             # Unauthorized viewer (e.g. denied `?session=` deep-link): push NO
@@ -1336,7 +1474,9 @@ defmodule Ezagent.World.ConversationActions do
     |> push_event("world:state", updates)
   end
 
-  defp parse_agent_uri(value) when is_binary(value) do
+  @doc false
+  @spec parse_agent_uri(String.t()) :: {:ok, URI.t()} | :error
+  def parse_agent_uri(value) when is_binary(value) do
     with %URI{scheme: "entity"} = uri <- Ezagent.URI.new!(value),
          true <- Ezagent.URI.type?(uri, :agent) do
       {:ok, uri}
@@ -1396,6 +1536,9 @@ defmodule Ezagent.World.ConversationActions do
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: URI.to_string(left) == URI.to_string(right)
 
   defp jsonable(value) do
     cond do

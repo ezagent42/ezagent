@@ -21,7 +21,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
   contract test (not a mock-of-everything). The HTTP boundary is
   exercised by the existing `Ezagent.PluginCurlAgent.ApiClient` —
   the moduledoc + integration test there covers the wire shape;
-  we don't re-test `:httpc`.
+  we don't re-test `Req`.
 
   ## ALLEN MANUAL action
 

@@ -98,6 +98,57 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
              []
   end
 
+  test "a created PTY bootstrap atomically installs a secret-free Claude home" do
+    fresh_agent = URI.new!("entity://team-a/agent/cc_bootstrap-#{uniq()}")
+    target = CcAgent.agent_config_dir(fresh_agent)
+    base = tmp("cc-bootstrap-base")
+    write!(base, "settings.json", ~s({"model":"test"}))
+    on_exit(fn -> File.rm_rf(target) end)
+
+    tmpl = %{
+      "config_dir" => base,
+      "allocated_config_dir" => target,
+      "cascade" => %{
+        layer_dirs: [%{dir: base}],
+        source_dir_for: fn _ -> flunk("grantless bootstrap must not resolve a secret source") end,
+        grantless_bootstrap: :pty,
+        created_witness: Ezagent.Kind.CreatedWitness.new(fresh_agent)
+      }
+    }
+
+    assert {:ok, ^target, nil} = CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+    assert File.exists?(Path.join(target, ".ezagent-config-complete"))
+    assert File.read!(Path.join(target, "settings.json")) == ~s({"model":"test"})
+    refute File.exists?(Path.join(target, ".credentials.json"))
+    assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+  end
+
+  test "a grantless marker without a matching created-winner witness fails closed" do
+    agent_uri = URI.new!("entity://team-a/agent/cc_bootstrap_bad_witness-#{uniq()}")
+    other_agent = URI.new!("entity://team-a/agent/cc_bootstrap_other-#{uniq()}")
+    target = CcAgent.agent_config_dir(agent_uri)
+    base = tmp("cc-bootstrap-bad-witness-base")
+    write!(base, "settings.json", "BASE")
+    on_exit(fn -> File.rm_rf(target) end)
+
+    tmpl = %{
+      "config_dir" => base,
+      "allocated_config_dir" => target,
+      "cascade" => %{
+        layer_dirs: [%{dir: base}],
+        source_dir_for: fn _ -> {:ok, base} end,
+        grantless_bootstrap: :pty,
+        created_witness: Ezagent.Kind.CreatedWitness.new(other_agent)
+      }
+    }
+
+    assert {:error, {:cascade_materialize_failed, :invalid_created_winner_witness}} =
+             CcAgent.create_agent_config_dir(agent_uri, tmpl)
+
+    refute File.exists?(target)
+    assert GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+  end
+
   test "revoke-mid-start (TOCTOU) aborts before the dir is committed", ctx do
     base = tmp("cc-base")
     write!(base, "settings.json", "BASE")
@@ -473,6 +524,28 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       assert is_binary(incarnation)
       # the deferred mint inserted a durable grant + copied the secret.
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) != nil
+      assert File.read!(Path.join(target, ".credentials.json")) == "ALICE-TOKEN"
+    end
+
+    test "a pending grant never falls back to the grantless bootstrap path", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_pending_bootstrap-#{uniq()}")
+      target = CcAgent.agent_config_dir(fresh_agent)
+      on_exit(fn -> File.rm_rf(target) end)
+      base = tmp("cc-pending-bootstrap-base")
+      write!(base, "settings.json", "BASE")
+
+      tmpl =
+        ctx
+        |> witness_bridge_tmpl(base, target)
+        |> update_in(["cascade"], &Map.put(&1, :grantless_bootstrap, :pty))
+        |> Ezagent.Credential.HomeRuntime.put_cascade_created_witness(
+          Ezagent.Kind.CreatedWitness.new(fresh_agent)
+        )
+
+      assert {:ok, ^target, {:grant, _, _, _, _}} =
+               CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+
       assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) != nil
       assert File.read!(Path.join(target, ".credentials.json")) == "ALICE-TOKEN"
     end

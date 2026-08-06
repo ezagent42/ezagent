@@ -131,6 +131,29 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            """
   end
 
+  test "create_session/3 reachable call graph contains no Agent spawn writer" do
+    source =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/session_creator.ex")
+      |> File.read!()
+
+    assert reachable_agent_spawn_calls(source, {:create_session, 3}) == []
+  end
+
+  test "create-session gate detects an actual Agent spawn hidden behind an innocuous helper" do
+    source = """
+    defmodule GateFixture do
+      def create_session(name, owner, opts), do: persist(name, owner, opts)
+      defp persist(_name, _owner, _opts), do: write_record()
+      defp write_record, do: Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{})
+    end
+    """
+
+    assert [
+             %{function: {:write_record, 0}, writer: "Ezagent.Kind.spawn(Ezagent.Entity.Agent)"}
+           ] = reachable_agent_spawn_calls(source, {:create_session, 3})
+  end
+
   # The gap that let `hello` stay broken while `default` was fixed: a session
   # Template Class's `instantiate/3` ALSO runs inside the `workspace.create_session`
   # dispatch (`Workspace.create_session_via_class/5`), and `HelloSession` →
@@ -175,12 +198,12 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
   # ── R4: extend the gate to the INSTALL lane ────────────────────────────────
   #
   # The create gate above proves create spawns no agent. The install lane
-  # (`install_session_socialware/1`, run in a fire-and-forget supervised Task) is
-  # where agents ARE spawned — but it must obey the OTHER half of the #912
-  # contract: **a role member that fails to start never rolls the session back**.
-  # An install failure is LOUD (Logger.error + `…:socialware_install:failed`
-  # telemetry) and leaves the session alive + owner-only — never a rollback, never
-  # a hang. This static gate locks the "never rollback" half.
+  # (`install_session_socialware/1`, run from a durable obligation) is where
+  # agents ARE spawned — but it must obey both halves of the #912 contract:
+  # **a role member that fails to start never rolls the session back**, and a
+  # successful create never leaves an untracked owner-only Session. The
+  # obligation is persisted before create reports success; a supervised Task
+  # wakes it immediately and the periodic sweeper recovers it after restart.
   #
   # NOTE (Phase 3 split): S6 removes the recipe-cap readiness coupling and the
   # gate below locks that lane to binding/create or issue/absorb. The
@@ -206,6 +229,20 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
     # CREATE path (`verify_or_recreate` / the finalize failure branch).
     [install_lane | _] = String.split(from_install, "def demand_spawn_member(", parts: 2)
 
+    application_body =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/application.ex")
+      |> File.read!()
+
+    assert application_body =~ "Ezagent.Session.SocialwareInstallSweeper",
+           "the Session application must supervise restart recovery for durable installs"
+
+    assert install_lane =~ "SocialwareInstallObligations.ensure_pending",
+           "the post-create install lane must persist a durable obligation before success"
+
+    assert install_lane =~ "socialware_install_not_persisted",
+           "obligation persistence failure must propagate instead of returning false success"
+
     refute install_lane =~ "rollback_session",
            """
            The post-create install lane calls `rollback_session`.
@@ -213,8 +250,9 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            #912 contract: a declared role member that fails to start must NOT roll
            the session back. `install_session_socialware/1` runs AFTER the
            owner-only session is durable; its failure is LOUD (Logger.error +
-           `[:ezagent, :session, :socialware_install, :failed]` telemetry) and
-           leaves the session alive + usable — never a rollback.
+           `[:ezagent, :session, :socialware_install, :failed]` telemetry), remains
+           represented by a retryable durable obligation, and never rolls back
+           the Session.
            """
   end
 
@@ -328,6 +366,120 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
       :nomatch -> nil
     end
   end
+
+  defp reachable_agent_spawn_calls(source, entrypoint) do
+    ast =
+      Code.string_to_quoted!(source,
+        warn_on_unnecessary_quotes: false,
+        emit_warnings: false
+      )
+
+    definitions =
+      Macro.prewalk(ast, %{}, fn
+        {kind, _meta, [head, [do: body]]} = node, acc when kind in [:def, :defp] ->
+          case function_signature(head) do
+            nil -> {node, acc}
+            signature -> {node, Map.update(acc, signature, [body], &[body | &1])}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+      |> elem(1)
+
+    definitions
+    |> reachable_definitions([entrypoint], MapSet.new())
+    |> Enum.flat_map(fn signature ->
+      definitions
+      |> Map.fetch!(signature)
+      |> Enum.flat_map(&spawn_writers(&1, signature))
+    end)
+  end
+
+  defp reachable_definitions(_definitions, [], visited), do: MapSet.to_list(visited)
+
+  defp reachable_definitions(definitions, [signature | rest], visited) do
+    cond do
+      MapSet.member?(visited, signature) ->
+        reachable_definitions(definitions, rest, visited)
+
+      not Map.has_key?(definitions, signature) ->
+        reachable_definitions(definitions, rest, visited)
+
+      true ->
+        callees =
+          definitions
+          |> Map.fetch!(signature)
+          |> Enum.flat_map(&local_calls/1)
+          |> Enum.filter(&Map.has_key?(definitions, &1))
+
+        reachable_definitions(
+          definitions,
+          callees ++ rest,
+          MapSet.put(visited, signature)
+        )
+    end
+  end
+
+  defp local_calls(body) do
+    Macro.prewalk(body, MapSet.new(), fn
+      {{:., _, _}, _, _} = node, calls ->
+        {node, calls}
+
+      {name, _, args} = node, calls when is_atom(name) and is_list(args) ->
+        {node, MapSet.put(calls, {name, length(args)})}
+
+      node, calls ->
+        {node, calls}
+    end)
+    |> elem(1)
+    |> MapSet.to_list()
+  end
+
+  defp spawn_writers(body, signature) do
+    Macro.prewalk(body, [], fn node, calls ->
+      case spawn_writer(node) do
+        nil -> {node, calls}
+        writer -> {node, [%{function: signature, writer: writer} | calls]}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+  end
+
+  defp spawn_writer(
+         {{:., _, [{:__aliases__, _, kind_module}, :spawn]}, _,
+          [
+            {:__aliases__, _, agent_module} | _args
+          ]}
+       )
+       when kind_module in [[:Ezagent, :Kind], [:Kind]] and
+              agent_module in [[:Ezagent, :Entity, :Agent], [:Entity, :Agent], [:Agent]],
+       do: "Ezagent.Kind.spawn(Ezagent.Entity.Agent)"
+
+  defp spawn_writer({{:., _, [{:__aliases__, _, module}, function]}, _, _args})
+       when {module, function} in [
+              {[:Ezagent, :SpawnRegistry], :spawn},
+              {[:Ezagent, :SpawnRegistry], :spawn_detailed},
+              {[:SpawnRegistry], :spawn},
+              {[:SpawnRegistry], :spawn_detailed},
+              {[:Ezagent, :Agent, :RecipeMaterializer], :create_agent_from_recipe},
+              {[:RecipeMaterializer], :create_agent_from_recipe}
+            ],
+       do: "#{Enum.join(module, ".")}.#{function}"
+
+  defp spawn_writer({{:., _, [_module, :spawn_from_template_content]}, _, _args}),
+    do: "spawn_from_template_content"
+
+  defp spawn_writer(_node), do: nil
+
+  defp function_signature({:when, _, [head | _guards]}), do: function_signature(head)
+  defp function_signature({name, _, nil}) when is_atom(name), do: {name, 0}
+
+  defp function_signature({name, _, args}) when is_atom(name) and is_list(args),
+    do: {name, length(args)}
+
+  defp function_signature(_head), do: nil
 
   test "create_session/3 does not reference the agent materializer" do
     body =

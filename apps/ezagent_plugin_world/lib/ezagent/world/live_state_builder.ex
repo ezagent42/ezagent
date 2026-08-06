@@ -18,6 +18,7 @@ defmodule Ezagent.World.LiveStateBuilder do
 
   alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationSessionState
+  alias EzagentPluginHello.App
 
   # Route pages derive synthetic single-slot layouts. The older persisted
   @doc false
@@ -218,6 +219,10 @@ defmodule Ezagent.World.LiveStateBuilder do
       "workspace_uri" => workspace,
       "layout" => layout,
       "templates" => session_template_names(caller, workspace_uri),
+      "template_schemas" => Ezagent.World.WorkspacePluginData.session_template_schemas(),
+      "llm_flavors" => App.llm_flavors(),
+      "reusable_llm_agents" =>
+        Ezagent.World.ConversationData.reusable_llm_agents(caller, workspace_uri),
       "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
       # F3: explicitly clear any stale create_error — the React island merges

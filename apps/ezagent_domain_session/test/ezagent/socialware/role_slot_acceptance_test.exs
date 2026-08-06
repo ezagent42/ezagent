@@ -33,7 +33,8 @@ defmodule Ezagent.Socialware.RoleSlotAcceptanceTest do
                "role_name" => "bot",
                "fill" => "agent",
                "recipe" => "support-bot",
-               "flavor" => "curl"
+               "flavor" => "curl",
+               "credential_admission" => "immediate"
              },
              %{"role_name" => "visitor", "fill" => "human"}
            ]

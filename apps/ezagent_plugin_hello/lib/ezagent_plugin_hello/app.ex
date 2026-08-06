@@ -13,10 +13,10 @@ defmodule EzagentPluginHello.App do
 
   alias Ezagent.Capability
   alias Ezagent.Entity.{Session, SessionTemplate, User}
+  alias Ezagent.Provenance.DerivationEdges
   alias Ezagent.Socialware.Installation
   alias EzagentDomainInstanceMessage.SessionCreator
-  alias EzagentDomainInstanceMessage.SessionCreator.Derivation
-  alias EzagentPluginHello.Members
+  alias EzagentDomainInstanceMessage.SessionCreator.{Derivation, TemplateResolver}
 
   @doc """
   Idempotently create the hello app AND install its declared team — the composite
@@ -28,8 +28,8 @@ defmodule EzagentPluginHello.App do
   founder for the boot 官网 seed; the dispatch caller on the world-UI path).
   Defaults to the admin entity.
 
-  Returns `{:ok, session_uri, front_desk_uri}`, resolved by role
-  (`Members.role_uri/2`), NOT the retired `orch_<name>` URI convention.
+  Returns `{:ok, session_uri, session_uri}`. The third element is retained for
+  seed/tooling compatibility and now names the Session sender.
 
   **Do NOT call this from a session-create dispatch** — `HelloSession.instantiate/3`
   calls `create_app/3` and lets `Workspace.create_session` fire the install
@@ -41,11 +41,10 @@ defmodule EzagentPluginHello.App do
     with {:ok, %URI{} = session_uri} <- create_app(ws, name, opts),
          # `{:ok, summary}` — a role slot skipped for missing credentials (e.g. the
          # `requires`-pulled cc orchestrator, for a non-admin installer) does NOT
-         # fail the app; hello's own roles are credential-less. `resolve_front_desk/1`
-         # below is the fail-loud check that the roles hello ACTUALLY needs landed.
-         {:ok, _summary} <- SessionCreator.install_session_socialware(session_uri),
-         {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
-      {:ok, session_uri, front_desk_uri}
+         # fail the app; the selected LLM can remain an explicit admission
+         # candidate for legacy seed/tooling callers.
+         {:ok, _summary} <- SessionCreator.install_session_socialware(session_uri) do
+      {:ok, session_uri, session_uri}
     end
   end
 
@@ -67,8 +66,6 @@ defmodule EzagentPluginHello.App do
   @spec create_app(String.t(), String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
   def create_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
-    workspace = Capability.workspace_of(session_uri)
-    content = hello_template_content(opts)
 
     # hello-A — the session OWNER is the caller principal: the home workspace's
     # founder for the boot 官网 seed (`OfficialSiteSeed`), the dispatch caller on
@@ -77,15 +74,28 @@ defmodule EzagentPluginHello.App do
     # entity for legacy test/tooling callers that pass no owner.
     owner = Keyword.get(opts, :owner, User.admin_uri())
 
-    with :ok <- validate_llm_template(opts),
-         # SPEC §4.4 (Decision A) — the anon-homesite create path is the SECOND
-         # production behavior_set_for_template/2 call site and is NOT retired in
-         # P0, so it MUST apply the SAME freeze helper: resolve the hello def to
-         # its current revision and bake the pin into the content's installs
-         # BEFORE persisting the template, resolving behaviors, and writing install
-         # records. Without this a later hello publish would silently change the
-         # running flagship — the surface the pin matters most for.
-         {:ok, content} <- Installation.freeze_template_installs(content, workspace),
+    with :ok <- validate_llm_template(opts) do
+      case Session.owner(session_uri) do
+        {:ok, %URI{} = existing_owner} ->
+          if URI.to_string(existing_owner) == URI.to_string(owner),
+            do: create_fresh_app(session_uri, ws, owner, opts),
+            else: {:error, :derivation_edge_conflict}
+
+        _ ->
+          create_fresh_app(session_uri, ws, owner, opts)
+      end
+    end
+  end
+
+  defp create_fresh_app(session_uri, ws, owner, opts) do
+    workspace = Capability.workspace_of(session_uri)
+    # A reused agent URI belongs to this session's install record and working
+    # copy, never to the persisted SessionTemplate manifest.
+    manifest_content = hello_template_content(Keyword.delete(opts, :llm_agent_uri))
+
+    with {:ok, tmpl, frozen_manifest_content} <-
+           resolve_or_persist_template(session_uri, workspace, ws, manifest_content),
+         content = hello_session_install_content(frozen_manifest_content, opts),
          # hello-A — DERIVE the page owner from the hello def's `owner_policy`,
          # which is `:installer` (`hello_definition_attrs/1`), so this returns
          # the threaded caller VERBATIM (`Definition.owner_uri/2`). (The `:fixed`
@@ -95,7 +105,6 @@ defmodule EzagentPluginHello.App do
          # to `User.admin_uri()`.)
          {:ok, owner_uri} <-
            Installation.owner_uri_for_template(content, workspace, owner),
-         {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <- Derivation.record(session_uri, {owner_uri, workspace, tmpl}),
          :ok <-
@@ -163,17 +172,6 @@ defmodule EzagentPluginHello.App do
     end
   end
 
-  # Resolve the front-desk member URI by its `role_name` facet (the framework
-  # materialization assigns a PLANNED UUID URI — it is NOT derivable from the
-  # session name). A missing front-desk after a successful materialize is a
-  # fail-loud bug, not a silent nil.
-  defp resolve_front_desk(%URI{} = session_uri) do
-    case Members.role_uri(session_uri, "front-desk") do
-      {:ok, %URI{} = uri} -> {:ok, uri}
-      :error -> {:error, {:front_desk_not_materialized, session_uri}}
-    end
-  end
-
   @doc "Synchronously run one generation turn (seed/test convenience)."
   @spec generate_now(URI.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
   def generate_now(%URI{} = session_uri, prompt) when is_binary(prompt) do
@@ -184,11 +182,35 @@ defmodule EzagentPluginHello.App do
 
   defp validate_llm_template(opts) do
     flavor = Keyword.get(opts, :llm_flavor, "curl")
+    agent_uri = Keyword.get(opts, :llm_agent_uri)
 
-    if flavor in llm_flavors() do
-      :ok
-    else
-      {:error, {:hello_llm_completion_unsupported, flavor}}
+    cond do
+      flavor not in llm_flavors() ->
+        {:error, {:hello_llm_completion_unsupported, flavor}}
+
+      is_nil(agent_uri) or match?(%URI{}, agent_uri) ->
+        :ok
+
+      true ->
+        {:error, {:invalid_reusable_llm_agent_uri, agent_uri}}
+    end
+  end
+
+  # A retried create is idempotent even if the live hello definition has moved:
+  # the immutable parent-template edge and working copy keep the original pin.
+  # Fresh sessions still freeze and persist the current definition.
+  defp resolve_or_persist_template(session_uri, workspace, ws, content) do
+    case DerivationEdges.parent_for(session_uri, :parent_template) do
+      {:ok, _recorded} ->
+        TemplateResolver.resolve_for_repair(session_uri, "hello", workspace)
+
+      :error ->
+        with {:ok, frozen_content} <-
+               Installation.freeze_template_installs(content, workspace),
+             {:ok, template_uri} <-
+               SessionTemplate.persist_version_as_system(frozen_content, ws) do
+          {:ok, template_uri, frozen_content}
+        end
     end
   end
 
@@ -199,6 +221,10 @@ defmodule EzagentPluginHello.App do
   defp hello_template_content(opts) do
     case Keyword.get(opts, :llm_flavor) do
       flavor when is_binary(flavor) ->
+        # Legacy callers may still select only a flavor. The session.hello
+        # creation path passes both values after preflighting reusable agents.
+        # Keeping the flavor-only declaration here avoids widening App into a
+        # second authority/credential gate.
         %{
           name: "hello",
           installs: [
@@ -210,6 +236,50 @@ defmodule EzagentPluginHello.App do
         %{name: "hello", installs: ["hello"]}
     end
   end
+
+  defp hello_session_install_content(content, opts) do
+    case {Keyword.get(opts, :llm_flavor), Keyword.get(opts, :llm_agent_uri)} do
+      {flavor, %URI{} = agent_uri} when is_binary(flavor) ->
+        install =
+          content
+          |> Installation.installs_from_template()
+          |> List.first()
+          |> case do
+            install when is_map(install) -> install
+            _ -> %{ref: "hello"}
+          end
+          |> Map.put(:config, %{
+            role_slots: [
+              %{
+                role_name: "llm",
+                flavor: flavor,
+                config: llm_provider_config(flavor, Keyword.get(opts, :llm_provider_profile)),
+                install_mode: :reuse,
+                reuse_agent_uri: URI.to_string(agent_uri)
+              }
+            ]
+          })
+
+        Map.put(content, :installs, [install])
+
+      _ ->
+        content
+    end
+  end
+
+  @doc false
+  def llm_provider_config(flavor) when flavor in ["curl", "cc-headless-custom"],
+    do: %{provider: "deepseek"}
+
+  def llm_provider_config(_flavor), do: %{provider: nil}
+
+  @doc false
+  def llm_provider_config(flavor, provider)
+      when flavor in ["curl", "cc-headless-custom"] and is_binary(provider) and provider != "" do
+    %{provider: provider}
+  end
+
+  def llm_provider_config(_flavor, _provider), do: %{provider: nil}
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the
   # Template Class create path) hits an already-bound session; that is success,

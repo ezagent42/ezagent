@@ -131,11 +131,9 @@ defmodule EzagentPluginHello.TurnDriver do
   end
 
   @doc """
-  Post a builder-authored chat line into the session (ack / progress / result
-  narration). `:cast` fire-and-forget; `sender = actor` so it renders as the
-  builder's reply, NOT the operator's own message. Authority is the same
-  admin-genesis the turn dispatches use — only the message `sender` carries the
-  builder identity. No-ops on blank text.
+  Post a Session-authored chat line into the session (ack / progress / result
+  narration). The actor argument remains for call-site compatibility, but both
+  message authorship and authority are the Session itself. No-ops on blank text.
   """
   @spec say(URI.t(), URI.t(), String.t()) :: :ok | {:ok, term()} | {:error, term()}
   def say(session_uri, actor, text), do: say_nav(session_uri, actor, text, nil)
@@ -148,11 +146,11 @@ defmodule EzagentPluginHello.TurnDriver do
   """
   @spec say_nav(URI.t(), URI.t(), String.t(), map() | nil) ::
           :ok | {:ok, term()} | {:error, term()}
-  def say_nav(%URI{} = session_uri, %URI{} = actor, text, nav)
+  def say_nav(%URI{} = session_uri, %URI{} = _actor, text, nav)
       when is_binary(text) and text != "" do
     body = %{text: text, attachments: []}
     body = if is_map(nav), do: Map.put(body, "nav", nav), else: body
-    send_body(session_uri, actor, body)
+    send_body(session_uri, body)
   end
 
   def say_nav(_session_uri, _actor, _text, _nav), do: :ok
@@ -166,26 +164,27 @@ defmodule EzagentPluginHello.TurnDriver do
   error prose here. Same `:cast` + authority profile as `say/3`.
   """
   @spec say_error(URI.t(), URI.t(), term()) :: :ok | {:ok, term()} | {:error, term()}
-  def say_error(%URI{} = session_uri, %URI{} = actor, reason) do
-    send_body(session_uri, actor, Ezagent.Agent.ErrorSignal.reply_body(reason))
+  def say_error(%URI{} = session_uri, %URI{} = _actor, reason) do
+    send_body(session_uri, Ezagent.Agent.ErrorSignal.reply_body(reason))
   end
 
   def say_error(_session_uri, _actor, _reason), do: :ok
 
-  defp send_body(%URI{} = session_uri, %URI{} = actor, body) do
-    msg = Ezagent.Message.new(actor, body)
+  defp send_body(%URI{} = session_uri, body) do
+    msg = Ezagent.Message.new(session_uri, body)
 
     target = Ezagent.URI.with_action(session_uri, :session, :send)
     admin = Ezagent.Entity.User.admin_uri()
 
-    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, actor, target) do
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
       Invocation.dispatch(%Invocation{
         target: target,
         mode: :cast,
         args: %{message: msg},
         ctx: %{
-          caller: actor,
-          authenticated_principal: actor,
+          caller: session_uri,
+          authenticated_principal: session_uri,
           caps: MapSet.new([signed_cap]),
           reply: :ignore
         },

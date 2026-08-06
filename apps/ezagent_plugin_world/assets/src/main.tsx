@@ -135,7 +135,8 @@ const roots = new WeakMap<HTMLElement, Root>()
 
 export type WorldHandle = {
   unmount: () => void
-  // LiveView hook 侧桥：把最新的 data-last-dispatch 值推给已挂载的 WorldApp。
+  // LiveView hook 侧桥：把最新的 data-* 值推给已挂载的 WorldApp。
+  setCaller: (caller: WorldMountOptions["caller"]) => void
   setDispatchStatus: (status: string | null) => void
 }
 
@@ -144,21 +145,32 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
 
   const dispatchStatusListener: {current: ((status: string | null) => void) | null} = {current: null}
   const root = createRoot(element)
+  let caller = options.caller
+
+  const render = () => {
+    root.render(
+      <WorldApp
+        {...options}
+        caller={caller}
+        getDispatchStatus={() => element.dataset.lastDispatch || null}
+        registerDispatchStatusListener={(listener) => {
+          dispatchStatusListener.current = listener
+        }}
+      />,
+    )
+  }
+
   roots.set(element, root)
-  root.render(
-    <WorldApp
-      {...options}
-      getDispatchStatus={() => element.dataset.lastDispatch || null}
-      registerDispatchStatusListener={(listener) => {
-        dispatchStatusListener.current = listener
-      }}
-    />,
-  )
+  render()
 
   return {
     unmount: () => {
       root.unmount()
       roots.delete(element)
+    },
+    setCaller: (nextCaller) => {
+      caller = nextCaller
+      render()
     },
     setDispatchStatus: (status) => dispatchStatusListener.current?.(status),
   }
@@ -437,6 +449,8 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   const args: Record<string, unknown> = {short_name: shortName, template_name: templateName}
                   if (socialwareRef) args.socialware_ref = socialwareRef
                   if (options?.role_slots) args.role_slots = options.role_slots
+                  if (options?.llm_flavor) args.llm_flavor = options.llm_flavor
+                  if (options?.llm_agent_uri) args.llm_agent_uri = options.llm_agent_uri
                   if (options?.socialware_config_id) args.socialware_config_id = options.socialware_config_id
                   if (options?.socialware_content_hash) args.socialware_content_hash = options.socialware_content_hash
                   setState((current) => ({...current, session_create_pending: true, create_error: null}))
@@ -582,6 +596,9 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     action: "session.pty.open",
                     args: {session_uri: sessionUri, agent},
                   })
+                },
+                onAgentAdmissionAction: (action, args) => {
+                  sendEvent("world:dispatch", {action, args})
                 },
                 onForkConfig: (sessionUri) => {
                   sendEvent("world:dispatch", {
@@ -1031,6 +1048,8 @@ type RenderContext = {
     socialwareRef?: string,
     options?: {
       role_slots?: Array<Record<string, unknown>>
+      llm_flavor?: string
+      llm_agent_uri?: string
       socialware_config_id?: string
       socialware_content_hash?: string
     },
@@ -1054,6 +1073,7 @@ type RenderContext = {
   onSessionSwitch: (sessionUri: string) => void
   onSessionViewSwitch: (sessionUri: string, view: string) => void
   onOpenSessionPty: (sessionUri: string, agent: string) => void
+  onAgentAdmissionAction: (action: string, args: Record<string, string>) => void
   onRestartOrchestrator: (sessionUri: string) => void
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
   onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
@@ -1088,6 +1108,8 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onAddRoutingRule={context.onAddRoutingRule}
           onCreate={context.onCreateSession}
           onOpenPty={context.onOpenSessionPty}
+          onAgentAdmissionAction={context.onAgentAdmissionAction}
+          onPutApiKey={context.onPutApiKey}
           onRestartOrchestrator={context.onRestartOrchestrator}
           onSend={context.onChatSend}
           onSwitch={context.onSessionSwitch}

@@ -112,19 +112,27 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
         max_concurrency: 3,
         timeout: :infinity
       )
-      |> Enum.map(fn {:ok, result} -> result end)
+      |> Enum.map(fn
+        {:ok, result} -> result
+        {:exit, reason} -> flunk("concurrent create task exited: #{inspect(reason)}")
+      end)
 
-    for {short, elapsed_ms, {:ok, %{session_uri: session_uri}}} <- results do
+    assert length(results) == 3
+
+    for {short, elapsed_ms, result} <- results do
+      assert {:ok, %{session_uri: session_uri}} = result
+
       # The 5s dispatch budget was the SYMPTOM ceiling (canary saw ~5.3s), so a
       # `< 5_000` assertion was green THROUGHOUT the outage and guarded nothing.
       # With the agent transaction out of create, three concurrent creates through
       # the single Workspace Kind must land far under it.
       #
-      # 2s, not 1.5s: each create ALSO fires its own async socialware-install
-      # transaction, and those three background agent spawns contend for the same
-      # Ecto pool while creates #2/#3 are still being measured. 2s keeps a 2.6×
-      # margin over the pre-fix ~5.3s while tolerating that load on a slow CI box.
-      assert elapsed_ms < 2_000,
+      # 3s, not 1.5s: each create now persists its durable socialware-install
+      # obligation before replying, then wakes a background installer. The three
+      # callers queue through one Workspace Kind while those DB-backed installers
+      # contend for the same Ecto pool. 3s still keeps a meaningful margin below
+      # the pre-fix ~5.3s outage while measuring the new durable-enqueue boundary.
+      assert elapsed_ms < 3_000,
              "create_session #{short} exceeded the owner-only create budget: #{elapsed_ms}ms"
 
       assert URI.to_string(session_uri) == "session://system/default/#{short}"

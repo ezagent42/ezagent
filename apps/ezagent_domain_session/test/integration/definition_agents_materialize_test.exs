@@ -21,11 +21,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Identity.RecipeCapBinding
+  alias Ezagent.Session.AgentAdmissionSweeper
   alias Ezagent.Socialware.CompositionBinding
   alias Ezagent.{Invocation, KindRegistry}
   alias EzagentCore.Repo
   alias EzagentDomainInstanceMessage.MaterializedRoleTestBehavior
   alias EzagentDomainInstanceMessage.SessionCreator
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionState
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   defmodule StubTemplate do
@@ -121,6 +124,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     def credential_env_var, do: "MOONSHOT_API_KEY"
 
     @impl Ezagent.Agent.CredentialAdapter
+    def credential_connection(_opts), do: {:api_key, "moonshot", "Configure test API key"}
+
+    @impl Ezagent.Agent.CredentialAdapter
     def credential_relpaths, do: []
 
     @impl Ezagent.Agent.CredentialAdapter
@@ -166,6 +172,88 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
         {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
         {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
         {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defmodule PtyBootstrapStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.pty_bootstrap_stub"
+
+    def credential_connection(_opts), do: {:pty, "Connect test CLI"}
+
+    @impl Ezagent.Kind.Template
+    def template_data_extra(content) when is_map(content) do
+      case Ezagent.Kind.Template.content_field(content, :credential_bootstrap) do
+        nil -> %{}
+        bootstrap -> %{"credential_bootstrap" => bootstrap}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_pty_bootstrap_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, %{"credential_bootstrap" => bootstrap} = data, _workspace_uri)
+        when bootstrap in [:pty, "pty"] do
+      spawn_bare_agent(data)
+    end
+
+    def instantiate(_name, _data, _workspace_uri),
+      do: {:error, :missing_pty_bootstrap_marker}
+
+    defp spawn_bare_agent(data) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defmodule ApiKeyNoBootstrapStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.api_key_no_bootstrap_stub"
+
+    def credential_connection(_opts),
+      do: {:api_key, "test-provider", "Configure test API key"}
+
+    @impl Ezagent.Kind.Template
+    def template_data_extra(content) when is_map(content) do
+      case Ezagent.Kind.Template.content_field(content, :credential_bootstrap) do
+        nil -> %{}
+        bootstrap -> %{"credential_bootstrap" => bootstrap}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_api_key_no_bootstrap_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, workspace_uri) do
+      if Map.has_key?(data, "credential_bootstrap") do
+        {:error, :unexpected_pty_bootstrap_marker}
+      else
+        PtyBootstrapStubTemplate.instantiate(
+          template_name(),
+          Map.put(data, "credential_bootstrap", :pty),
+          workspace_uri
+        )
       end
     end
   end
@@ -280,6 +368,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     @impl Ezagent.Kind.Template
     def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
+      if Process.get({__MODULE__, :failure_mode}) == :post_spawn_rollback_failure do
+        {:error, :injected_config_cleanup_failure}
+      else
+        destroy_safe_config_dir(agent_uri, config_dir)
+      end
+    end
+
+    defp destroy_safe_config_dir(agent_uri, config_dir) do
       if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(config_dir, agent_uri, @namespace) do
         case File.rm_rf(config_dir) do
           {:ok, _removed} -> :ok
@@ -294,6 +390,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       case Process.get({__MODULE__, :failure_mode}) do
         :convergence ->
           Ezagent.ReadyGate.put(uri, :not_ready)
+
+        :post_spawn_rollback_failure ->
+          Ezagent.ReadyGate.put(uri, :failed)
 
         {:join, session_uri, blocker_uri, role_name} ->
           join_blocker(session_uri, blocker_uri, role_name)
@@ -425,6 +524,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor
   end
 
+  defp register_connection_capture_flavor(n, connection) do
+    {suffix, template_class} =
+      case connection do
+        :pty -> {"pty_bootstrap", PtyBootstrapStubTemplate}
+        :api_key -> {"api_key_no_bootstrap", ApiKeyNoBootstrapStubTemplate}
+      end
+
+    flavor = "definition_agents_#{suffix}_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: template_class
+      })
+
+    flavor
+  end
+
   defp register_slice_stub_flavor(n) do
     flavor = "definition_agents_slice_stub_#{n}"
 
@@ -501,6 +619,44 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     on_exit(fn -> terminate(session_uri) end)
     session_uri
+  end
+
+  defp live_session(n, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    session_uri = Ezagent.URI.session(workspace_name, "generic", "reuse-race-#{n}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Session.behaviors(),
+        owner_uri: owner_uri
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+    on_exit(fn -> terminate(session_uri) end)
+    session_uri
+  end
+
+  defp confirmed_user(%URI{} = workspace_uri, prefix) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    user_uri = Ezagent.URI.user(workspace_name, "#{prefix}-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(user_uri, "pw-not-secret-#{uniq()}", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(user_uri)
+    on_exit(fn -> terminate(user_uri) end)
+    user_uri
+  end
+
+  defp reuse_working_copy(workspace_uri, n, declaration) do
+    SessionBehavior.default_template_working_copy()
+    |> Map.put(
+      :session_template_uri,
+      Ezagent.URI.template(
+        Ezagent.URI.workspace_name!(workspace_uri),
+        :session,
+        "reuse@revision-#{n}"
+      )
+    )
+    |> Map.put(:member_declarations, [declaration])
   end
 
   # Seed a recipe with requested_caps over behaviors LOADED in domain_session
@@ -610,6 +766,58 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
     on_exit(fn -> terminate(agent_uri) end)
     agent_uri
+  end
+
+  defp live_agent(n, recipe_name, flavor) when is_binary(flavor) do
+    agent_uri = live_agent(n, recipe_name)
+    :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+    agent_uri
+  end
+
+  defp live_agent(n, recipe_name, %URI{} = workspace_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    agent_uri = Ezagent.URI.agent(workspace_name, "reusable-#{n}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: agent_uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
+    :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
+    on_exit(fn -> terminate(agent_uri) end)
+    agent_uri
+  end
+
+  defp live_agent(n, recipe_name, %URI{} = workspace_uri, flavor) when is_binary(flavor) do
+    agent_uri = live_agent(n, recipe_name, workspace_uri)
+    :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, flavor)
+    agent_uri
+  end
+
+  defp grant_manage(grantee, target) do
+    proposed =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        target,
+        Ezagent.Capability.workspace_of(target),
+        grantee
+      )
+
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        grantee,
+        proposed,
+        {:admin, @owner_uri},
+        :sync
+      )
+
+    wanted_key = Ezagent.Capability.identity_key(proposed)
+
+    Enum.find(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+      Ezagent.Capability.identity_key(cap) == wanted_key
+    end)
   end
 
   defp activate_recipe_binding(agent_uri, recipe_name) do
@@ -883,7 +1091,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
   test "fresh role grants creator Manage before attempting the session join" do
     source =
-      "../../lib/ezagent_domain_instance_message/session_creator/definition_agents.ex"
+      "../../lib/ezagent_domain_instance_message/session_creator/definition_agent_lifecycle.ex"
       |> Path.expand(__DIR__)
       |> File.read!()
 
@@ -916,6 +1124,43 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert_receive {:task_3_fresh_spawned, planned_uri, config_dir}
     assert_fresh_role_rolled_back(planned_uri, config_dir)
+  end
+
+  test "a provisional post-spawn failure surfaces rollback failure evidence" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "provisional-rollback-failure-#{n}"
+    flavor = register_convergence_timeout_flavor(n)
+
+    declaration = %{
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      credential_admission: :before_session_join
+    }
+
+    assert {:error,
+            {
+              _post_spawn_failure,
+              {:rollback_failed, {:fresh_spawn_rollback_incomplete, rollback_errors}}
+            }} =
+             with_failure_mode(:post_spawn_rollback_failure, fn ->
+               DefinitionAgents.spawn_provisional(
+                 session_uri,
+                 @workspace_uri,
+                 @owner_uri,
+                 declaration
+               )
+             end)
+
+    assert Enum.any?(rollback_errors, fn
+             {:config_dir_destroy_failed, _agent_uri, _path, :injected_config_cleanup_failure} ->
+               true
+
+             _ ->
+               false
+           end)
   end
 
   test "a fresh role that fails join leaves no live or durable residue" do
@@ -1356,7 +1601,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert binding.parent_template_uri == expected_parent_template_uri
   end
 
-  test "ensure_orchestrator adopts a bare Agent Kind without credentials" do
+  test "ensure_orchestrator does not adopt a bare credentialled Agent Kind" do
     n = uniq()
     session_uri = live_session(n)
 
@@ -1376,22 +1621,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(orchestrator_uri, "orchestrator")
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    assert {:ok, ^orchestrator_uri, :already_present} =
+    assert {:error, {:orchestrator_adoption_failed, _reason}} =
              Ezagent.Entity.Session.Orchestrator.ensure_orchestrator(
                session_uri,
                @workspace_uri,
                @owner_uri
              )
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "orchestrator") == nil
   end
 
-  test "reuse install choice joins a credential-less existing agent" do
+  test "reuse with an unclassifiable credentialless flavor is skipped" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-advisor-#{n}"
-    reusable = live_agent(n, recipe_name)
+    flavor = register_stub_flavor(n)
+    reusable = live_agent(n, recipe_name, flavor)
 
-    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -1400,38 +1648,350 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                  %{
                    recipe: recipe_name,
                    role_name: role_name,
+                   flavor: flavor,
                    install_mode: :reuse,
                    reuse_agent_uri: reusable
                  }
                ]
              )
 
-    members = members_of(session_uri)
-    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
+    assert {:reuse_agent_revalidation_failed, ^role_name, :ineligible_credential_status} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
-  test "reuse install choice rejects an agent from a different recipe" do
+  test "reuse of an unavailable agent is skipped instead of aborting installation" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-unavailable-#{n}"
+    flavor = register_stub_flavor(n)
+    unavailable = Ezagent.URI.agent("system", "missing-reusable-#{n}")
+
+    assert {:ok,
+            %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}], deferred: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   flavor: flavor,
+                   install_mode: :reuse,
+                   reuse_agent_uri: unavailable
+                 }
+               ]
+             )
+
+    assert {:reuse_agent_unavailable, ^role_name, _} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+  end
+
+  test "reuse accepts a matching flavor recovered only from durable state" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-durable-flavor-#{n}"
+    flavor = register_stub_flavor(n)
+    reusable = live_agent(n, recipe_name, flavor)
+
+    assert {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(reusable)
+    terminate(reusable)
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               reusable,
+               Map.put(state, :sandbox, %{
+                 config_dir_path: nil,
+                 template_class: nil,
+                 respawn_template_data: %{flavor: flavor},
+                 pty_phase: nil
+               }),
+               kind_type: :agent,
+               version: 0
+             )
+
+    :ok = Ezagent.AgentFlavorAttributes.delete(reusable)
+    assert {:ok, ^flavor} = Ezagent.AgentFlavorResolver.flavor_from_durable_snapshot(reusable)
+    assert {:ok, ^flavor} = Ezagent.UriQuery.resolve(:flavor, reusable)
+
+    result =
+      DefinitionAgents.materialize_definition_agents(
+        session_uri,
+        @workspace_uri,
+        @owner_uri,
+        [
+          %{
+            recipe: recipe_name,
+            role_name: role_name,
+            flavor: flavor,
+            install_mode: :reuse,
+            reuse_agent_uri: reusable
+          }
+        ]
+      )
+
+    assert :none = Ezagent.AgentFlavorAttributes.get(reusable)
+    assert {:ok, ^flavor} = Ezagent.UriQuery.resolve(:flavor, reusable)
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+  end
+
+  test "reuse provider-profile drift leaves a durable unfilled role" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-provider-mismatch-#{n}"
+    flavor = "curl"
+    reusable = live_agent(n, recipe_name, flavor)
+
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   flavor: flavor,
+                   config: %{provider: "different-profile"},
+                   install_mode: :reuse,
+                   reuse_agent_uri: reusable
+                 }
+               ]
+             )
+
+    assert {:reuse_agent_revalidation_failed, ^role_name, :provider_profile_mismatch} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+  end
+
+  test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
+    n = uniq()
+    workspace_uri = Ezagent.URI.workspace("reuse-race-#{n}")
+    ensure_workspace_kind!(workspace_uri)
+    on_exit(fn -> terminate(workspace_uri) end)
+
+    operator = confirmed_user(workspace_uri, "reuse-operator")
+    session_uri = live_session(n, workspace_uri, operator)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-race-#{n}"
+    flavor = register_convergence_timeout_flavor(n)
+    reusable = live_agent(n, recipe_name, workspace_uri, flavor)
+    manage_cap = grant_manage(operator, reusable)
+
+    assert %Ezagent.Capability{} = manage_cap
+    assert Ezagent.Identity.Authority.manages?(operator, reusable)
+
+    declaration = %{
+      fill: :agent,
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      install_mode: :reuse,
+      reuse_agent_uri: reusable
+    }
+
+    # This is the same composition install preflight that SessionInstaller
+    # performs before materialization. Revocation below therefore exercises the
+    # concrete preflight -> revoke -> install window the final reuse check seals.
+    assert :ok =
+             Ezagent.Socialware.CompositionCaps.assert_install_authorized(
+               session_uri,
+               [Map.put(declaration, :operates, [%{role: "unused"}])],
+               install_authorized?: true
+             )
+
+    working_copy = reuse_working_copy(workspace_uri, n, declaration)
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert :ok =
+             Ezagent.Identity.Grant.revoke_cap_via_router(
+               operator,
+               manage_cap,
+               {:admin, @owner_uri},
+               :sync
+             )
+
+    assert eventually(fn -> not Ezagent.Identity.Authority.manages?(operator, reusable) end)
+
+    assert {:ok,
+            %{
+              satisfied: [],
+              skipped: [
+                %{
+                  role_name: ^role_name,
+                  reason: {:reuse_agent_revalidation_failed, ^role_name, :unauthorized}
+                }
+              ]
+            }} = SessionCreator.install_session_socialware(session_uri, {workspace_uri, operator})
+
+    assert [%{role_name: ^role_name, reason: :unavailable}] =
+             SessionCreator.unfilled_agent_role_slots(session_uri)
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+    assert {:ok, _pid} = KindRegistry.lookup(reusable)
+    refute_receive {:task_3_fresh_spawned, _uri, _config_dir}, 100
+  end
+
+  test "reuse of a credential-ineligible agent leaves a durable unfilled role" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-credentialled-#{n}"
+    flavor = register_env_profile_flavor(n)
+    reusable = live_agent(n, recipe_name, flavor)
+
+    declaration = %{
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      install_mode: :reuse,
+      reuse_agent_uri: reusable
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "reuse-credentialled@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert {:ok,
+            %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}], deferred: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [declaration]
+             )
+
+    assert {:reuse_agent_revalidation_failed, ^role_name, :ineligible_credential_status} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+    assert AgentAdmission.list(session_uri) == []
+  end
+
+  test "provisional admission marks only PTY connections for credential bootstrap" do
+    for connection <- [:pty, :api_key] do
+      n = uniq()
+      session_uri = live_session(n)
+      recipe_name = seed_recipe(n)
+      role_name = "#{connection}-admission-#{n}"
+      flavor = register_connection_capture_flavor(n, connection)
+
+      declaration = %{
+        recipe: recipe_name,
+        role_name: role_name,
+        flavor: flavor,
+        credential_admission: :before_session_join
+      }
+
+      working_copy =
+        SessionBehavior.default_template_working_copy()
+        |> Map.put(
+          :session_template_uri,
+          Ezagent.URI.template("system", :session, "#{connection}-admission@revision-#{n}")
+        )
+        |> Map.put(:member_declarations, [declaration])
+
+      assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+      assert {:ok, %{deferred: [^role_name]}} =
+               DefinitionAgents.materialize_definition_agents(
+                 session_uri,
+                 @workspace_uri,
+                 @owner_uri,
+                 [declaration]
+               )
+
+      caps = Ezagent.Identity.list_caps_for(@owner_uri)
+
+      assert {:ok, %{status: :authenticating} = admission} =
+               AgentAdmission.begin(session_uri, role_name, @owner_uri, caps)
+
+      provisional_uri = Ezagent.URI.new!(admission.provisional_agent_uri)
+      assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+
+      on_exit(fn ->
+        AgentAdmission.cancel(
+          session_uri,
+          role_name,
+          admission.attempt_id,
+          {@owner_uri, caps}
+        )
+      end)
+
+      assert Ezagent.Kind.alive?(provisional_uri)
+    end
+  end
+
+  test "reuse recipe drift is allowed when the flavor and credential contract match" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     other_recipe = seed_recipe("other-#{n}")
     role_name = "reuse-mismatch-#{n}"
-    reusable = live_agent(n, other_recipe)
+    flavor = register_stub_flavor(n)
+    reusable = live_agent(n, other_recipe, flavor)
 
-    assert {:error, {:reuse_agent_recipe_mismatch, ^role_name, ^reusable}, _partial} =
-             DefinitionAgents.materialize_definition_agents(
+    declaration = %{
+      fill: :agent,
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      install_mode: :reuse,
+      reuse_agent_uri: reusable
+    }
+
+    assert {:ok, _} =
+             SessionBehavior.system_set_working_copy(
                session_uri,
-               @workspace_uri,
-               @owner_uri,
-               [
-                 %{
-                   recipe: recipe_name,
-                   role_name: role_name,
-                   install_mode: :reuse,
-                   reuse_agent_uri: reusable
-                 }
-               ]
+               reuse_working_copy(@workspace_uri, n, declaration)
              )
+
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
+             SessionCreator.install_session_socialware(session_uri, {@workspace_uri, @owner_uri})
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+    assert SessionCreator.unfilled_agent_role_slots(session_uri) == []
+  end
+
+  test "reuse flavor drift leaves a durable unfilled role" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-flavor-mismatch-#{n}"
+    declared_flavor = register_stub_flavor(n)
+    reusable = live_agent(n, recipe_name, "different-#{declared_flavor}")
+
+    declaration = %{
+      fill: :agent,
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: declared_flavor,
+      install_mode: :reuse,
+      reuse_agent_uri: reusable
+    }
+
+    assert {:ok, _} =
+             SessionBehavior.system_set_working_copy(
+               session_uri,
+               reuse_working_copy(@workspace_uri, n, declaration)
+             )
+
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
+             SessionCreator.install_session_socialware(session_uri, {@workspace_uri, @owner_uri})
+
+    assert {:reuse_agent_revalidation_failed, ^role_name, :flavor_mismatch} = reason
+
+    assert [%{role_name: ^role_name, reason: :unavailable}] =
+             SessionCreator.unfilled_agent_role_slots(session_uri)
 
     refute Map.has_key?(members_of(session_uri), reusable)
   end
@@ -1441,7 +2001,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-pending-#{n}"
-    reusable = live_agent("pending-#{n}", recipe_name)
+    flavor = register_stub_flavor(n)
+    reusable = live_agent("pending-#{n}", recipe_name, flavor)
     {:ok, reusable_pid} = KindRegistry.lookup(reusable)
     {:ok, active_binding} = activate_recipe_binding(reusable, recipe_name)
     :ok = Ezagent.AgentPassiveAttributes.put(reusable, true)
@@ -1456,6 +2017,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                  %{
                    recipe: recipe_name,
                    role_name: role_name,
+                   flavor: flavor,
                    install_mode: :reuse,
                    reuse_agent_uri: reusable
                  }
@@ -1564,7 +2126,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
   end
 
-  test "a role slot's provider does not gate materialization" do
+  test "a credential role's provider is preserved through mandatory admission" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1581,70 +2143,226 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     role = "kimi-role-#{n}"
 
+    declaration = %{
+      "provider" => "kimi",
+      recipe: recipe_name,
+      role_name: role,
+      flavor: env_flavor
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "provider-admission@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
     assert {:ok, summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
                @owner_uri,
-               [
-                 %{
-                   "provider" => "kimi",
-                   recipe: recipe_name,
-                   role_name: role,
-                   flavor: env_flavor
-                 }
-               ]
+               [declaration]
              )
 
     assert summary.skipped == []
-    assert summary.satisfied == [role]
+    assert summary.satisfied == []
+    assert summary.deferred == [role]
 
-    members = members_of(session_uri)
-    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
-    on_exit(fn -> terminate(member) end)
+    assert [%{role_name: ^role, status: :pending_auth, provider: "kimi"}] =
+             AgentAdmission.list(session_uri)
 
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, role, @owner_uri, caps)
     System.put_env("MOONSHOT_API_KEY", "test-only-key")
 
-    assert {:ok, summary2} =
+    assert {:ok, %{status: :joined, provider: "kimi"}} =
+             AgentAdmission.complete(
+               session_uri,
+               role,
+               authenticating.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members_of(session_uri), role)
+    on_exit(fn -> terminate(member) end)
+  end
+
+  test "a gated role with no credential source is deferred instead of skipped" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role_name = "gated-kimi-#{n}"
+
+    previous = System.get_env("MOONSHOT_API_KEY")
+    System.delete_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    declaration = %{
+      role_name: role_name,
+      fill: :agent,
+      recipe: recipe_name,
+      flavor: env_flavor,
+      provider: "kimi",
+      credential_admission: :before_session_join
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "gated@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert {:ok, %{satisfied: [], skipped: [], deferred: [^role_name]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
                @owner_uri,
-               [
-                 %{
-                   "provider" => "kimi",
-                   recipe: recipe_name,
-                   role_name: role,
-                   flavor: env_flavor
-                 }
-               ]
+               [declaration]
              )
 
-    assert summary2.skipped == []
-    assert summary2.satisfied == [role]
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+
+    assert [
+             %{
+               role_name: ^role_name,
+               status: :pending_auth,
+               connection: {:api_key, %{provider: "moonshot", label: "Configure test API key"}}
+             }
+           ] =
+             EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
   end
 
-  test "an env-credential flavor without a provider still materializes" do
+  test "the production sweep invalidates a joined profile-driven API-key admission" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role_name = "gated-kimi-revalidation-#{n}"
+    previous = System.get_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    declaration = %{
+      role_name: role_name,
+      fill: :agent,
+      recipe: recipe_name,
+      flavor: env_flavor,
+      provider: "kimi",
+      credential_admission: :before_session_join
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "gated-revalidation@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+    System.delete_env("MOONSHOT_API_KEY")
+
+    assert {:ok, %{deferred: [^role_name]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [declaration]
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, role_name, @owner_uri, caps)
+    System.put_env("MOONSHOT_API_KEY", "test-moonshot-key")
+
+    assert {:ok, %{status: :joined, provider: "kimi"} = joined} =
+             AgentAdmission.complete(
+               session_uri,
+               role_name,
+               authenticating.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    legacy = Map.delete(joined, :provider)
+    assert :ok = AgentAdmissionState.put_admission(session_uri, legacy)
+
+    assert {:ok, %{status: :joined, provider: "kimi"}} =
+             AgentAdmission.current(session_uri, declaration)
+
+    assert [%{provider: "kimi"}] = AgentAdmission.list(session_uri)
+
+    assert :ok =
+             AgentAdmissionState.put_admission(
+               session_uri,
+               AgentAdmission.list(session_uri) |> hd() |> Map.delete(:provider)
+             )
+
+    System.delete_env("MOONSHOT_API_KEY")
+    _results = AgentAdmissionSweeper.run_due(DateTime.utc_now())
+
+    assert [
+             %{
+               role_name: ^role_name,
+               status: :pending_auth,
+               provider: "kimi",
+               attempt_id: nil,
+               provisional_agent_uri: nil,
+               failure_code: :authentication_failed
+             }
+           ] = AgentAdmission.list(session_uri)
+  end
+
+  test "an env-credential flavor without a provider still requires admission" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     env_flavor = register_env_profile_flavor(n)
     role = "no-profile-#{n}"
+    declaration = %{recipe: recipe_name, role_name: role, flavor: env_flavor}
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "no-profile@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
 
     assert {:ok, summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
                @owner_uri,
-               [%{recipe: recipe_name, role_name: role, flavor: env_flavor}]
+               [declaration]
              )
 
     assert summary.skipped == []
-    assert summary.satisfied == [role]
+    assert summary.satisfied == []
+    assert summary.deferred == [role]
 
-    members = members_of(session_uri)
-    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
-    on_exit(fn -> terminate(member) end)
+    assert [%{role_name: ^role, status: :pending_auth, provider: nil}] =
+             AgentAdmission.list(session_uri)
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role) == nil
   end
 
   test "a credentialless slice-backed role materializes with its co-declared role" do

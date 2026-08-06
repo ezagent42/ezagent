@@ -3,19 +3,37 @@ defmodule Ezagent.World.ConversationData do
   Read-path + message construction for the world session-conversation surface
   (LV→world parity migration PR-1).
 
-  Mirrors the `Ezagent.World.{AdminData,IdentityData,WorkspacePluginData}`
-  pattern: `EzagentPluginWorld.WorldLive` stays the SSR/comms shell and this
-  module owns the pure data shaping. Everything here is derived against
-  core/domain survivors (`Ezagent.MessageStore`, `Ezagent.EntityPresenter`,
-  `Ezagent.Message`) — NOT the retired LiveView plugin's `SessionContext`, so
-  the LV app can be deleted wholesale at parity-migration PR-7.
+  `EzagentPluginWorld.WorldLive` stays the SSR/comms shell while this module
+  shapes core/domain survivor data without the retired LiveView plugin.
   """
 
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ErrorCards
   alias Ezagent.World.PluginPageRegistry
+  alias EzagentPluginHello.{App, ReusableLlmAgent}
 
   @message_limit 50
+
+  @doc "Returns non-secret reusable LLM Agent options for the current workspace."
+  @spec reusable_llm_agents(URI.t() | term(), URI.t() | term()) :: [map()]
+  def reusable_llm_agents(%URI{} = caller, %URI{scheme: "workspace"} = workspace_uri) do
+    App.llm_flavors()
+    |> Enum.flat_map(fn flavor ->
+      case ReusableLlmAgent.list(caller, workspace_uri, flavor) do
+        {:ok, candidates} -> candidates
+        {:error, _reason} -> []
+      end
+    end)
+    |> Enum.map(fn candidate ->
+      %{
+        "uri" => URI.to_string(candidate.agent_uri),
+        "flavor" => candidate.flavor,
+        "provider_profile" => candidate.provider_profile
+      }
+    end)
+  end
+
+  def reusable_llm_agents(_caller, _workspace_uri), do: []
 
   # world's OWN built-in React islands (SessionView id → render mode) that ship
   # inside world itself. Plugin-owned native surfaces are NOT listed here — they
@@ -48,15 +66,16 @@ defmodule Ezagent.World.ConversationData do
     # message/member reads authorize + row-policy through the `SessionReads`
     # chokepoint, which sources the caller's caps LIVE (never trusting the
     # passed set for authority).
-    viewer_ctx = fn -> ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri) end
-
     # The conversation read plane is authorized at the chokepoint FIRST: both the
     # message read AND the member read route through `SessionReads`, which shares
     # ONE live-first predicate. A non-member (e.g. a `?session=<uri>` deep-link)
     # is denied here — no message content and no roster leak — instead of the
     # pre-consolidation direct-store read that disclosed the conversation.
-    with {:ok, message_rows} <- authorized_messages(session_uri, caller_uri, viewer_ctx),
-         {:ok, members_map} <- SessionReads.members(caller_uri, session_uri) do
+    with {:ok, members_map} <- SessionReads.members(caller_uri, session_uri),
+         viewer_ctx = fn ->
+           ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri, members_map)
+         end,
+         {:ok, message_rows} <- authorized_messages(session_uri, caller_uri, viewer_ctx) do
       authorized_state(
         session_uri,
         caller_uri,
@@ -79,8 +98,15 @@ defmodule Ezagent.World.ConversationData do
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
       "access_denied" => false,
+      # Chat is always the initial session surface. An installed external view
+      # (for example Hello's Page preview) is available as a tab, but must not
+      # replace the conversation after every state refresh/message update.
+      "active_view" => default_active_view(session_uri, caller_uri),
       "templates" =>
         Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
+      "template_schemas" => Ezagent.World.WorkspacePluginData.session_template_schemas(),
+      "llm_flavors" => App.llm_flavors(),
+      "reusable_llm_agents" => reusable_llm_agents(caller_uri, workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => members,
@@ -88,6 +114,7 @@ defmodule Ezagent.World.ConversationData do
       "installed_socialwares" => installed_socialwares(session_uri),
       "unfilled_agent_role_slots" =>
         EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
+      "agent_admissions" => agent_admissions(session_uri),
       "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri),
       "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
       "routing_entity_candidates" =>
@@ -123,12 +150,16 @@ defmodule Ezagent.World.ConversationData do
       "access_denied" => true,
       "templates" =>
         Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
+      "template_schemas" => Ezagent.World.WorkspacePluginData.session_template_schemas(),
+      "llm_flavors" => App.llm_flavors(),
+      "reusable_llm_agents" => reusable_llm_agents(caller_uri, workspace_uri),
       "messages" => [],
       "oldest_cursor" => nil,
       "members" => [],
       "human_role_slots" => [],
       "installed_socialwares" => [],
       "unfilled_agent_role_slots" => [],
+      "agent_admissions" => [],
       "degraded_operates_edges" => [],
       "invite_candidates" => [],
       "routing_entity_candidates" => [],
@@ -147,6 +178,9 @@ defmodule Ezagent.World.ConversationData do
         err
     end
   end
+
+  @doc "Returns the non-secret agent-admission projection for a conversation session."
+  defdelegate agent_admissions(session_uri), to: Ezagent.World.AdmissionProjection, as: :list
 
   @doc """
   The registry-driven view tabs for `session_uri` visible to `caller_uri`.
@@ -181,6 +215,8 @@ defmodule Ezagent.World.ConversationData do
     session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
   end
 
+  defp default_active_view(%URI{} = _session_uri, _caller_uri), do: "conversation"
+
   # world's own built-in islands (`:conversation`/`:pty`) map directly; everything
   # else → `plugin_or_surface_mode/2` (plugin-native / external / unsupported).
   defp render_mode(id, mod) do
@@ -199,11 +235,7 @@ defmodule Ezagent.World.ConversationData do
         key
 
       _ ->
-        cond do
-          id in [:page, :hello_page] -> "external"
-          external_render_view?(mod) -> "external"
-          true -> "unsupported"
-        end
+        if external_render_view?(mod), do: "external", else: "unsupported"
     end
   end
 
@@ -451,7 +483,7 @@ defmodule Ezagent.World.ConversationData do
   this is the load-bearing piece, not the autocomplete UI.
   """
   @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
-  def parse_mentions(text, members), do: parse_mentions(text, members, [])
+  defdelegate parse_mentions(text, members), to: Ezagent.World.ConversationMessages
 
   @doc """
   Like `parse_mentions/2`, with the session's open human role slots included
@@ -459,13 +491,8 @@ defmodule Ezagent.World.ConversationData do
   mentions; they only prevent `@source:role` from falling back to `@source`.
   """
   @spec parse_mentions(String.t(), [map()], [map() | String.t()]) :: [URI.t()]
-  def parse_mentions(text, members, open_role_slots)
-      when is_binary(text) and is_list(members) and is_list(open_role_slots) do
-    (parse_uri_mentions(text) ++ parse_bare_mentions(text, members, open_role_slots))
-    |> Enum.uniq_by(&URI.to_string/1)
-  end
-
-  def parse_mentions(_text, _members, _open_role_slots), do: []
+  defdelegate parse_mentions(text, members, open_role_slots),
+    to: Ezagent.World.ConversationMessages
 
   @doc """
   Fetch a page of messages older than `cursor` (ISO-8601), oldest-first.
@@ -892,105 +919,6 @@ defmodule Ezagent.World.ConversationData do
 
       _ ->
         false
-    end
-  end
-
-  # --- @mention parse (port vs survivors; NO LV dep) ----------------------
-
-  defp parse_uri_mentions(text) do
-    ~r/@(entity:\/\/[^\s]+)/
-    |> Regex.scan(text, capture: :all_but_first)
-    |> List.flatten()
-    |> Enum.uniq()
-    |> Enum.flat_map(&safe_uri/1)
-  end
-
-  defp parse_bare_mentions(_text, [], _open_role_slots), do: []
-
-  defp parse_bare_mentions(text, members, open_role_slots) do
-    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?)/u
-    |> Regex.scan(text, capture: :all_but_first)
-    |> List.flatten()
-    |> Enum.uniq()
-    |> Enum.flat_map(&resolve_member_token(&1, members, open_role_slots))
-  end
-
-  defp resolve_member_token(name, members, open_role_slots) do
-    case resolve_member_name(name, members) do
-      [] -> maybe_resolve_colon_head(name, members, open_role_slots)
-      uris -> uris
-    end
-  end
-
-  defp maybe_resolve_colon_head(name, members, open_role_slots) do
-    case String.split(name, ":", parts: 2) do
-      [head, _tail] ->
-        if colon_role_name_present?(members, open_role_slots) do
-          []
-        else
-          resolve_member_name(head, members)
-        end
-
-      _ ->
-        []
-    end
-  end
-
-  defp colon_role_name_present?(members, open_role_slots) do
-    members
-    |> Enum.map(&Map.get(&1, "role_name"))
-    |> Kernel.++(Enum.map(open_role_slots, &role_name_value/1))
-    |> Enum.any?(&(is_binary(&1) and String.contains?(&1, ":")))
-  end
-
-  defp role_name_value(%{"role_name" => role_name}), do: role_name
-  defp role_name_value(%{role_name: role_name}), do: role_name
-  defp role_name_value(role_name) when is_binary(role_name), do: role_name
-  defp role_name_value(_), do: nil
-
-  # Bare @name resolves by URI path segment, then role name, then display name -
-  # unique match only inside the deciding tier.
-  defp resolve_member_name(name, members) do
-    [
-      Enum.filter(members, &(uri_path_segment(Map.get(&1, "uri")) == name)),
-      Enum.filter(members, &(Map.get(&1, "role_name") == name)),
-      Enum.filter(members, &(Map.get(&1, "display_name") == name))
-    ]
-    |> Enum.reduce_while([], fn
-      [], acc ->
-        {:cont, acc}
-
-      candidates, _acc ->
-        {:halt, unique_candidate_uri(candidates)}
-    end)
-  end
-
-  defp unique_candidate_uri(candidates) do
-    case candidates |> Enum.map(&Map.get(&1, "uri")) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
-      [uri_str] -> safe_uri(uri_str)
-      _ -> []
-    end
-  end
-
-  defp uri_path_segment(uri_str) when is_binary(uri_str) do
-    case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{} = uri} ->
-        case Ezagent.URI.name(uri) do
-          {:ok, name} -> name
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp uri_path_segment(_), do: nil
-
-  defp safe_uri(uri_str) do
-    case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{} = uri} -> [uri]
-      _ -> []
     end
   end
 

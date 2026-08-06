@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.RouterTest do
   @moduledoc """
-  The `hello.orchestrator` routing policy. Hello materializes only its chat bridge
-  and LLM; intent actions execute on the session itself.
+  Hello's Session-ingress routing policy. Only the reusable LLM is materialized;
+  intent actions execute on the session itself.
   """
   use EzagentCore.DataCase, async: false
 
@@ -17,6 +17,19 @@ defmodule EzagentPluginHello.RouterTest do
       assert Router.classify("make the title red", false, session) == :answer
       assert Router.classify("generate a whole new landing page", false, session) == :answer
       assert Router.classify("", false, session) == :answer
+    end
+  end
+
+  describe "owner?/2" do
+    test "treats an unreadable session owner as a visitor" do
+      session =
+        Ezagent.URI.session(
+          "hello-owner-read-#{System.unique_integer([:positive])}",
+          :hello,
+          "missing"
+        )
+
+      refute Router.owner?(session, Ezagent.URI.user("system", "admin"))
     end
   end
 
@@ -45,6 +58,7 @@ defmodule EzagentPluginHello.RouterTest do
     setup do
       :ok = EzagentPluginHello.TestCatalog.import!()
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
 
       Enum.each(HelloApp.roles(), fn recipe ->
         {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
@@ -52,18 +66,20 @@ defmodule EzagentPluginHello.RouterTest do
 
       ws = "hello-router-#{System.unique_integer([:positive])}"
       {:ok, _ws_pid} = Workspace.create(ws, %{})
-      {:ok, session, front_desk} = App.ensure_app(ws, "guard-demo")
+      {:ok, session, _sender} = App.ensure_app(ws, "guard-demo")
 
-      %{session: session, front_desk: front_desk}
+      %{session: session}
     end
 
-    test "ignores messages emitted by its front-desk bridge", ctx do
-      refute Router.should_route?(ctx.session, ctx.front_desk)
+    test "ignores messages emitted by the Session itself", %{session: session} do
+      refute Router.should_route?(session, session)
     end
 
-    test "ignores an LLM member's ordinary output", %{session: session} do
-      assert {:ok, llm_uri} = Members.role_uri(session, "llm")
-      refute Router.should_route?(session, llm_uri)
+    test "allows an external agent while the LLM connection is pending", %{session: session} do
+      assert :error = Members.role_uri(session, "llm")
+
+      pending_llm = Ezagent.URI.entity("system", :agent, "pending-llm")
+      assert Router.should_route?(session, pending_llm)
     end
 
     test "routes a user message", %{session: session} do
@@ -82,7 +98,7 @@ defmodule EzagentPluginHello.RouterTest do
     end
   end
 
-  describe "should_route?/2 — fails closed when the front-desk bridge is unavailable" do
+  describe "should_route?/2 — fails closed when Session membership is unavailable" do
     test "a session URI with no live Kind is not routed" do
       ghost_session =
         Ezagent.URI.session(

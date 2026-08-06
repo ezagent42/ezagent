@@ -198,7 +198,7 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   def handle_receive(%{message: %Message{} = msg}, ctx) do
     # Membership-cap unification A2.2 (spec R1.1/R2.3) — `:receive` is cap-EXEMPT;
     # THIS held-cap check is the sole authority, placed at the TOP of the SINGLE
-    # entry for ALL agent flavors (cc / codex / hello / curl / native) — BEFORE
+    # entry for ALL agent flavors (cc / codex / curl / native) — BEFORE
     # the bridge short-circuit (`Delivery.deliver_agent_receive/2`), so every
     # plugin agent is gated through one site (a plugin agent cannot bypass it —
     # there is no separate plugin `{Kind, :receive}`). A revoked/pending agent
@@ -340,9 +340,5 @@ defmodule Ezagent.ActionSet.Agent.Receive do
   # same unique reply action; ONE clause serves every catalog profile.
   defp sync_result_action("cc-headless-custom"), do: :cc_headless_sync_result
   defp sync_result_action("py"), do: :py_sync_result
-  # hello's in-process router flavor — a UNIQUE action so it is not shadowed by the
-  # default `:sync_result` that `curl` claims globally on `Entity.Agent` (mirrors
-  # the py / cc-headless unique-action pattern). Owned by `Behavior.HelloOrchestrator`.
-  defp sync_result_action("hello"), do: :hello_sync_result
   defp sync_result_action(_), do: :sync_result
 end

@@ -99,7 +99,8 @@ defmodule Ezagent.Domain.Pty.Server.PhaseTest do
       # Now stop the server gracefully — terminate/2 runs and emits :dead
       _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
 
-      assert_receive {:pty_phase, ^uri, :dead, %{reason: _, at: _}}, 1_000
+      assert_receive {:pty_phase, ^uri, :dead, %{reason: _, respawning: false, at: _}},
+                     1_000
 
       # No further :dead broadcasts — `dead_broadcast?` guards
       # idempotency.

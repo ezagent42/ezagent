@@ -146,9 +146,8 @@ defmodule Ezagent.Cap do
   # `Ezagent.Kind.BehaviorSet.resolve_action/3` — the SAME authoritative truth the
   # cross-process branch (`action_context/3` with `pid != self()`) reads from the
   # live `slice_state` — WITHOUT a self `GenServer.call` (which would deadlock the
-  # Kind process). This lets a flavor-only, per-instance action (e.g.
-  # `:hello_sync_result`, mounted via a role recipe but NOT globally registered)
-  # resolve exactly like a globally-registered sibling (py's `:py_sync_result`).
+  # Kind process). This lets a flavor-only, per-instance action resolve exactly
+  # like a globally-registered sibling (for example py's `:py_sync_result`).
   #
   # Falls back to the GLOBAL `BehaviorRegistry` (`registered_subject/2`, the prior
   # self-target resolver) when there is no runtime view (framework/genesis paths

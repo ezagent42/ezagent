@@ -1190,7 +1190,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
       member_uri,
       actions,
       authorization,
-      :participation_cap
+      :participation_cap,
+      :best_effort
     )
   end
 
@@ -1229,7 +1230,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
         member_uri,
         pairs,
         session_grant_authorization(session_uri),
-        :member_view_cap
+        :member_view_cap,
+        :best_effort
       )
     else
       :ok
@@ -1237,6 +1239,26 @@ defmodule Ezagent.ActionSet.Session.Membership do
   end
 
   def grant_member_view_caps(_, _), do: :ok
+
+  @doc false
+  @spec grant_member_view_caps_strict(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_member_view_caps_strict(%URI{} = session_uri, %URI{} = member_uri) do
+    if user_uri?(member_uri) and Ezagent.Users.confirmed?(member_uri) and
+         current_member_entitled?(session_uri, member_uri) do
+      grant_session_caps(
+        session_uri,
+        member_uri,
+        Ezagent.Socialware.Installation.declared_view_actions(session_uri),
+        session_grant_authorization(session_uri),
+        :member_view_cap,
+        :strict
+      )
+    else
+      :ok
+    end
+  end
+
+  def grant_member_view_caps_strict(_session_uri, _member_uri), do: :ok
 
   @doc "Whether `member_uri` currently holds the live tier-1 member cap over `session_uri`."
   @spec current_member_entitled?(URI.t(), URI.t()) :: boolean()
@@ -1249,11 +1271,18 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # 共享 caller-side grant funnel —— participation tier 与 member view caps
   # 两路共用同一个 `grant_cap_via_router` 调用点(I12 paradigm-lock ratchet:
   # membership.ex 保持恰好 2 个 grant 调用点,收编而非新增 grant 真相源)。
-  defp grant_session_caps(session_uri, member_uri, pairs, authorization, telemetry_key) do
+  defp grant_session_caps(
+         session_uri,
+         member_uri,
+         pairs,
+         authorization,
+         telemetry_key,
+         error_policy
+       ) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     held = Ezagent.Identity.list_caps_for(member_uri)
 
-    Enum.each(pairs, fn {behavior, action} ->
+    Enum.reduce_while(pairs, :ok, fn {behavior, action}, :ok ->
       cap =
         Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
 
@@ -1263,7 +1292,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
       # valid exact-identity check, every navigation would re-grant and create
       # spurious `:identity` slice-change churn.
       if already_authorized?(held, member_uri, behavior, action, session_uri, workspace_uri) do
-        :ok
+        {:cont, :ok}
       else
         case Ezagent.Identity.Grant.grant_cap_via_router(
                member_uri,
@@ -1272,26 +1301,58 @@ defmodule Ezagent.ActionSet.Session.Membership do
                :sync
              ) do
           :ok ->
-            :ok
+            {:cont, :ok}
 
           {:error, reason} ->
-            Logger.warning(
-              "Session.Membership.grant_session_caps(#{inspect(telemetry_key)}): " <>
-                "grant failed for member=#{URI.to_string(member_uri)} on session=" <>
-                "#{URI.to_string(session_uri)} action=#{inspect(action)}: " <>
-                "#{inspect(reason)} (best-effort; member degrades to observe)."
+            handle_grant_error(
+              error_policy,
+              telemetry_key,
+              session_uri,
+              member_uri,
+              behavior,
+              action,
+              reason
             )
-
-            :telemetry.execute(
-              [:ezagent, :session, telemetry_key, :failed],
-              %{count: 1},
-              %{session_uri: session_uri, member_uri: member_uri, reason: reason}
-            )
-
-            :ok
         end
       end
     end)
+  end
+
+  defp handle_grant_error(
+         :strict,
+         _telemetry_key,
+         _session_uri,
+         member_uri,
+         behavior,
+         action,
+         reason
+       ) do
+    {:halt, {:error, {:member_view_cap_failed, member_uri, behavior, action, reason}}}
+  end
+
+  defp handle_grant_error(
+         :best_effort,
+         telemetry_key,
+         session_uri,
+         member_uri,
+         _behavior,
+         action,
+         reason
+       ) do
+    Logger.warning(
+      "Session.Membership.grant_session_caps(#{inspect(telemetry_key)}): " <>
+        "grant failed for member=#{URI.to_string(member_uri)} on session=" <>
+        "#{URI.to_string(session_uri)} action=#{inspect(action)}: " <>
+        "#{inspect(reason)} (best-effort; member degrades to observe)."
+    )
+
+    :telemetry.execute(
+      [:ezagent, :session, telemetry_key, :failed],
+      %{count: 1},
+      %{session_uri: session_uri, member_uri: member_uri, reason: reason}
+    )
+
+    {:cont, :ok}
   end
 
   defp grant_authorization(%URI{} = granter) do

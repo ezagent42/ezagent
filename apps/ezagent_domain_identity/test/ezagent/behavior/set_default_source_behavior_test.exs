@@ -30,6 +30,28 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
     uri_str
   end
 
+  defp seed_durable_host_source(uri_str, owner, flavor) do
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        uri_str,
+        %{
+          sandbox: %{
+            state: %{
+              config_dir_path: "/tmp/#{flavor}-host-login",
+              respawn_template_data: %{"flavor" => flavor},
+              template_class: nil,
+              passive: true
+            }
+          }
+        },
+        kind_type: :agent
+      )
+
+    uri = Ezagent.URI.new!(uri_str)
+    :ok = Ezagent.AgentLineage.record(uri, owner)
+    uri_str
+  end
+
   # The cap an owner holds on their own User Kind to set their default source.
   defp set_cap(owner_uri) do
     cap = %Capability{
@@ -77,6 +99,28 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
     assert src == ctx.source
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == ctx.source
+  end
+
+  test "owner can select a host-login source resolved only from its durable sandbox", ctx do
+    source =
+      seed_durable_host_source(
+        "entity://#{@ws}/agent/cc-host-login-#{System.unique_integer([:positive])}",
+        ctx.owner_str,
+        "cc"
+      )
+
+    assert {:ok, "cc"} = Ezagent.UriQuery.resolve(:flavor, Ezagent.URI.new!(source))
+
+    owner_caps = Ezagent.Identity.list_caps_for(ctx.owner_uri)
+
+    assert {:ok, %{source_uri: ^source}} =
+             UDS.set_via_dispatch(
+               ctx.owner_uri,
+               %{flavor: "cc", source_uri: source, workspace: @ws},
+               auth_ctx(ctx.owner_uri, owner_caps)
+             )
+
+    assert UDS.resolve(ctx.owner_str, @ws, "cc") == source
   end
 
   test "a stranger with unrelated caps is denied :missing_cap (no bypass)", ctx do

@@ -36,6 +36,26 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
     def materialize_credential_slice(_uri, _data), do: :ok
   end
 
+  defmodule PtyFileTC do
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    def credential_env_var, do: "TEST_CLI_HOME"
+    def credential_relpaths, do: ["auth.json"]
+    def secret_relpaths, do: ["auth.json"]
+    def auth_failure_signals, do: []
+    def credential_connection(_opts), do: {:pty, "Connect test CLI"}
+  end
+
+  defmodule ApiKeyFileTC do
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    def credential_env_var, do: "TEST_API_HOME"
+    def credential_relpaths, do: ["auth.json"]
+    def secret_relpaths, do: ["auth.json"]
+    def auth_failure_signals, do: []
+    def credential_connection(_opts), do: {:api_key, "test", "Configure API key"}
+  end
+
   @agent Ezagent.URI.entity("system", :agent, "cred-opt-demo")
   @admin Ezagent.Entity.User.admin_uri()
   @ws Ezagent.URI.workspace(:system)
@@ -83,5 +103,172 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
              Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
                source_template_uri: @source_tmpl
              )
+  end
+
+  test "session-local source policy bypasses reusable credential lookups" do
+    content = %{
+      name: "session-local-demo",
+      flavor: "curl",
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-chat",
+      cascade_resolution: %{
+        owner_uri: @admin,
+        workspace_uri: @ws,
+        flavor: "curl",
+        credential_required?: true,
+        credential_source_policy: :session_local,
+        user_source_lookup: fn -> flunk("user source must not be read") end,
+        workspace_shared_lookup: fn -> flunk("workspace source must not be read") end
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    refute Map.get(resolved.cascade_resolution, :credential_source_uri)
+  end
+
+  test "top-level session-local policy replaces a pre-authored credential cascade" do
+    old_source = Ezagent.URI.entity("system", :agent, "old-credential-source")
+
+    content = %{
+      name: "session-local-authored-cascade",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      cascade: %{
+        layer_dirs: [%{dir: "/tmp/reused-credential-layer"}],
+        source_dir_for: fn _ -> {:ok, "/tmp/reused-credential-source"} end,
+        pending_grant: %{source: old_source}
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    assert resolved.cascade.layer_dirs == []
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+    assert resolved.cascade_resolution.credential_source_policy == :session_local
+  end
+
+  test "top-level session-local policy sanitizes a nested authored resolution" do
+    old_source = Ezagent.URI.entity("system", :agent, "nested-old-credential-source")
+
+    content = %{
+      name: "session-local-authored-resolution",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      cascade_resolution: %{
+        owner_uri: @admin,
+        workspace_uri: @ws,
+        flavor: "curl",
+        credential_required?: true,
+        explicit_source: old_source,
+        credential_source_uri: old_source,
+        pending_grant: %{source: old_source},
+        user_source_lookup: fn -> flunk("user source must not be read") end,
+        workspace_shared_lookup: fn -> flunk("workspace source must not be read") end
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    resolution = resolved.cascade_resolution
+    assert resolution.credential_source_policy == :session_local
+    refute Map.has_key?(resolution, :explicit_source)
+    refute Map.has_key?(resolution, :credential_source_uri)
+    refute Map.has_key?(resolution, :pending_grant)
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+  end
+
+  test "session-local default resolution keeps non-secret cascade layers" do
+    content = %{
+      name: "session-local-default-layers",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    assert %{layer_dirs: [], source_dir_for: source_dir_for} = resolved.cascade
+    assert is_function(source_dir_for, 1)
+    assert resolved.cascade_resolution.workspace_layer_uri == @source_tmpl
+    assert resolved.cascade_resolution.credential_source_policy == :session_local
+    refute Map.has_key?(resolved.cascade_resolution, :credential_source_uri)
+  end
+
+  test "marks only a fully eligible PTY session-local cascade for grantless bootstrap" do
+    eligible = %{
+      name: "pty-bootstrap",
+      flavor: "test-cli",
+      config_dir: System.tmp_dir!(),
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      credential_bootstrap: :pty
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(eligible, PtyFileTC, @agent, @admin, @ws, "test-cli",
+               source_template_uri: @source_tmpl
+             )
+
+    assert resolved.cascade.grantless_bootstrap == :pty
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+
+    for {template_class, override} <- [
+          {PtyFileTC, %{credential_optional: false}},
+          {PtyFileTC, %{credential_source_policy: nil}},
+          {PtyFileTC, %{credential_bootstrap: nil}},
+          {ApiKeyFileTC, %{}}
+        ] do
+      content = Map.merge(eligible, override)
+
+      assert {:ok, invalid} =
+               Cascade.resolve_content(
+                 content,
+                 template_class,
+                 @agent,
+                 @admin,
+                 @ws,
+                 "test-cli",
+                 source_template_uri: @source_tmpl
+               )
+
+      refute Map.get(invalid[:cascade] || %{}, :grantless_bootstrap) == :pty
+    end
+  end
+
+  test "authored sourced cascades cannot inject the internal grantless marker" do
+    pending_grant = %{source: Ezagent.URI.entity("system", :agent, "credential-source")}
+
+    content = %{
+      credential_optional: true,
+      credential_bootstrap: :pty,
+      cascade: %{
+        layer_dirs: [],
+        source_dir_for: fn _ -> {:ok, System.tmp_dir!()} end,
+        pending_grant: pending_grant,
+        grantless_bootstrap: :pty
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, PtyFileTC, @agent, @admin, @ws, "test-cli", [])
+
+    assert resolved.cascade.pending_grant == pending_grant
+    refute Map.has_key?(resolved.cascade, :grantless_bootstrap)
   end
 end

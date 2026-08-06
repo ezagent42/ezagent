@@ -323,8 +323,12 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
     assert_receive {:pty_phase, ^uri, :dead, meta}, 5_000
 
     case meta.reason do
-      {:respawn_halted, _} -> :ok
-      _ -> assert_receive_until_halted(uri)
+      {:respawn_halted, _} ->
+        assert meta.respawning == false
+
+      _ ->
+        assert meta.respawning == true
+        assert_receive_until_halted(uri)
     end
   end
 end

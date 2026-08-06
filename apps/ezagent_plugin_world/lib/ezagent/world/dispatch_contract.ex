@@ -37,7 +37,7 @@ defmodule Ezagent.World.DispatchContract do
     # were dispatched by the React client (`main.tsx`) but were MISSING here,
     # so they fell through to the catch-all → `error:unsupported_action` (#224).
     conversation:
-      ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.assign_role session.socialware.uninstall session.create session.fork_config session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+      ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.assign_role session.socialware.uninstall session.create session.fork_config session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle session.agent_admission.begin session.agent_admission.complete session.agent_admission.reconcile session.agent_admission.cancel)
   }
 
   @direct_actions ~w(sessions.join agent.api_key.put)

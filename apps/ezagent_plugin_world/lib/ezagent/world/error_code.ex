@@ -11,16 +11,17 @@ defmodule Ezagent.World.ErrorCode do
 
   @typedoc "Error code entry following SOP §2 Schema"
   @type t :: %{
-    code: String.t(),
-    trigger: term(),
-    category: atom(),
-    message: %{
-      what: String.t(),
-      impact: String.t(),
-      fix_path: atom() | nil,
-      fix_owner: atom() | nil
-    }
-  }
+          code: String.t(),
+          trigger: term(),
+          category: atom(),
+          message: %{
+            optional(:fix_role) => String.t(),
+            what: String.t(),
+            impact: String.t(),
+            fix_path: atom() | nil,
+            fix_owner: atom() | nil
+          }
+        }
 
   @doc "Returns all registered error codes."
   @spec all() :: [t()]
@@ -35,7 +36,8 @@ defmodule Ezagent.World.ErrorCode do
           what: "Agent 未配置凭证",
           impact: "无法调用 AI 模型，你的消息暂时无法得到回复",
           fix_path: :agent_keys_page,
-          fix_owner: :workspace_founder
+          fix_owner: :workspace_founder,
+          fix_role: "llm"
         }
       },
       # 3 — action_unauthorized
@@ -48,6 +50,29 @@ defmodule Ezagent.World.ErrorCode do
           impact: "如需访问，请联系 workspace founder",
           fix_path: nil,
           fix_owner: :workspace_founder
+        }
+      },
+      %{
+        code: "agent_generation_timeout",
+        trigger: {:error, :generation_timeout},
+        category: :availability,
+        message: %{
+          what: "AI 页面生成超时",
+          impact: "模型未能在等待时间内完成生成，请重新发送你的请求",
+          fix_path: nil,
+          fix_owner: nil
+        }
+      },
+      %{
+        code: "llm_configuration_invalid",
+        trigger: {:error, {:llm_configuration_invalid, :_}},
+        category: :configuration,
+        message: %{
+          what: "LLM 配置无效",
+          impact: "当前模型或 API 地址无法访问（HTTP 状态码已记录），请检查 Agent 的 provider、API URL 和 model 配置",
+          fix_path: :agent_keys_page,
+          fix_owner: :workspace_founder,
+          fix_role: "llm"
         }
       }
     ]

@@ -1007,10 +1007,19 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     for file <- core_lib_files(),
         {line, line_no} <- file_lines(file),
         not String.contains?(line, "# arch-allow:"),
+        not sanctioned_core_tooling_ref?(file, line),
         Regex.match?(regex, line) do
       {file, line_no, String.trim(line)}
     end
   end
+
+  defp sanctioned_core_tooling_ref?(
+         "apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex",
+         line
+       ),
+       do: String.contains?(line, "AgentFlavorRegistry")
+
+  defp sanctioned_core_tooling_ref?(_file, _line), do: false
 
   defp file_lines(file) do
     file

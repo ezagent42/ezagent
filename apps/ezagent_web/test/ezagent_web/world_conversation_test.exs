@@ -22,6 +22,25 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
+  defmodule WorldRefreshRender do
+    @moduledoc false
+    def actions, do: [:world_refresh_render]
+  end
+
+  defmodule WorldRefreshView do
+    @moduledoc false
+    @behaviour Ezagent.UI.SessionView
+    use Phoenix.Component
+
+    def id, do: :world_refresh
+    def label, do: "Refresh"
+    def icon, do: "arrow-path"
+    def applies_to?(%URI{}), do: true
+    def applies_to?(_), do: false
+    def view_behavior, do: WorldRefreshRender
+    def render(assigns), do: ~H""
+  end
+
   setup do
     prior_home = System.get_env("EZAGENT_HOME")
 
@@ -865,6 +884,7 @@ defmodule EzagentWeb.WorldConversationTest do
       ])
 
     :ok = join_session(session_uri, viewer_uri)
+    :ok = join_session(session_uri, agent_uri)
 
     on_exit(fn ->
       _ = Ezagent.Domain.Pty.stop(agent_uri)
@@ -884,6 +904,27 @@ defmodule EzagentWeb.WorldConversationTest do
     {:ok, view, _html} =
       live(workspace_conn(conn, "system", viewer_uri), "/sessions?session=#{encoded}")
 
+    _html = render_async(view, 5_000)
+
+    # The terminal has never been opened in this LiveView. Merely loading the
+    # conversation must subscribe to phase changes for its applicable PTYs, so
+    # a definitive stop can remove the now-stale tab without a reload.
+    drain_liveview_mailbox(view)
+    :ok = Ezagent.Domain.Pty.stop(agent_uri)
+
+    unopened_stopped_views = assert_world_views_without_pty(view)
+    refute Enum.any?(unopened_stopped_views, &(&1["id"] == "pty"))
+
+    {:ok, _restarted_pty_pid} =
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: "/tmp",
+        cmd_override: ["/bin/sleep", "60"],
+        test_mode: false,
+        auto_prompts: []
+      })
+
+    assert is_pid(wait_for_pty_exec_pid(agent_uri))
+
     view
     |> element("#world-root")
     |> render_hook("world:dispatch", %{
@@ -892,6 +933,7 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     assert_push_event(view, "world:state", %{
+      "views" => views,
       "active_view" => "pty",
       "active_pty_agent_uri" => ^agent,
       "agent_status" => %{
@@ -903,10 +945,98 @@ defmodule EzagentWeb.WorldConversationTest do
       }
     })
 
+    assert Enum.any?(views, &(&1["id"] == "pty" and &1["mode"] == "pty"))
     assert is_binary(exec_pid)
     assert String.starts_with?(exec_pid, "#PID<")
     assert is_integer(os_pid)
     assert Process.alive?(view.pid)
+
+    # Creating the provisional agent grants its creator Manage authority, which
+    # emits an identity SliceChange after the PTY-open payload.  A route refresh
+    # must not replace the server-side conversation state with a base projection
+    # that forgets the terminal while the React client keeps it mounted.
+    send(view.pid, {:slice_changed, %{uri: viewer_uri, slice_key: :identity}})
+
+    assert_push_event(
+      view,
+      "world:state",
+      %{"component" => "conversation"} = refreshed_state,
+      5_000
+    )
+
+    assert refreshed_state["active_view"] == "pty"
+    assert refreshed_state["active_pty_agent_uri"] == agent
+    assert refreshed_state["agent_uri"] == agent
+    assert refreshed_state["pty_alive"] == true
+
+    html = render_hook(view, "pty_input", %{"bytes" => "x"})
+    refute html =~ ~s(data-last-dispatch="error:not_pty_route")
+
+    :ok = Ezagent.Domain.Pty.stop(agent_uri)
+
+    assert_push_event(view, "world:state", %{
+      "views" => stopped_views,
+      "active_view" => "conversation",
+      "active_pty_agent_uri" => nil,
+      "agent_uri" => nil,
+      "pty_alive" => false,
+      "pty_phase" => "dead"
+    })
+
+    refute Enum.any?(stopped_views, &(&1["id"] == "pty"))
+  end
+
+  test "slice refresh subscribes to a PTY that appeared after conversation mount", %{conn: conn} do
+    session_uri = world_session_uri()
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
+    drain_liveview_mailbox(view)
+
+    agent_uri =
+      Ezagent.URI.new!(
+        "entity://system/agent/world-refresh-pty-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _agent_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri, initial_caps: MapSet.new()})
+
+    :ok = join_session(session_uri, agent_uri)
+
+    {:ok, _pty_pid} =
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: "/tmp",
+        cmd_override: ["/bin/sleep", "60"],
+        test_mode: false,
+        auto_prompts: []
+      })
+
+    on_exit(fn ->
+      _ = Ezagent.Domain.Pty.stop(agent_uri)
+      _ = Ezagent.Kind.terminate(agent_uri)
+    end)
+
+    assert is_pid(wait_for_pty_exec_pid(agent_uri))
+
+    send(view.pid, {:slice_changed, %{uri: session_uri, slice_key: :session}})
+
+    refreshed_state = assert_surface_state_with_live_pty(view, agent_uri)
+
+    refreshed_views = refreshed_state["views"]
+    assert Enum.any?(refreshed_views, &(&1["id"] == "pty"))
+
+    assert Enum.any?(refreshed_state["members"], fn member ->
+             member["uri"] == URI.to_string(agent_uri) and member["pty_alive"] == true
+           end)
+
+    # Never open this PTY. The surface refresh itself must have installed the
+    # phase subscription that lets the definitive stop remove the stale tab.
+    drain_liveview_mailbox(view)
+    flush_liveview_events(view)
+    :ok = Ezagent.Domain.Pty.stop(agent_uri)
+    stopped_views = assert_world_views_without_pty(view)
+    refute Enum.any?(stopped_views, &(&1["id"] == "pty"))
   end
 
   test "PR-4: restart_orchestrator denies a caller without the restart cap", %{conn: conn} do
@@ -1092,6 +1222,47 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     assert pushed_uri == URI.to_string(session_uri)
+  end
+
+  test "a live identity cap grant refreshes the connected conversation views", %{conn: conn} do
+    :ok = Ezagent.UI.SessionViewRegistry.register(WorldRefreshView)
+    session_uri = world_session_uri()
+
+    viewer =
+      Ezagent.URI.new!("entity://system/user/world-refresh-#{System.unique_integer([:positive])}")
+
+    assert :ok = create_read_only_user(viewer, [])
+    assert :ok = join_session(session_uri, viewer)
+
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} =
+      live(workspace_conn(conn, "system", viewer), "/sessions?session=#{encoded}")
+
+    _html = render_async(view, 5_000)
+    drain_liveview_mailbox(view)
+    flush_liveview_events(view)
+
+    refute Enum.any?(world_state(view)["views"], &(&1["id"] == "world_refresh"))
+
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        WorldRefreshRender,
+        :world_refresh_render,
+        Ezagent.URI.instance(session_uri),
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    cap =
+      Ezagent.Test.CapHelper.with_test_authority(session_uri, :session, fn authority ->
+        Ezagent.Test.CapHelper.authority_signed_cap!(authority, viewer, requested)
+      end)
+
+    assert :ok = Ezagent.EntityCaps.grant(viewer, cap)
+
+    assert_push_event(view, "world:state", %{"views" => views}, 2_000)
+    assert Enum.any?(views, &(&1["id"] == "world_refresh"))
   end
 
   test "ConversationData.build_message embeds parsed mentions + verified attachments", %{
@@ -1351,6 +1522,66 @@ defmodule EzagentWeb.WorldConversationTest do
     # can still be handling its mount audit work for longer than that.
     _state = :sys.get_state(view.pid, 30_000)
     :ok
+  end
+
+  defp assert_world_views_without_pty(%{proxy: {ref, _topic, _}}, timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    receive_world_views_without_pty(ref, deadline)
+  end
+
+  defp flush_liveview_events(%{proxy: {ref, _topic, _}} = view) do
+    receive do
+      {^ref, _event} -> flush_liveview_events(view)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp assert_surface_state_with_live_pty(
+         %{proxy: {ref, _topic, _}},
+         %URI{} = agent_uri,
+         timeout \\ 5_000
+       ) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    receive_surface_state_with_live_pty(ref, URI.to_string(agent_uri), deadline)
+  end
+
+  defp receive_surface_state_with_live_pty(ref, agent_uri, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^ref,
+       {:push_event, "world:surface_state",
+        %{surface: "conversation", state: %{"members" => members} = state}}} ->
+        if Enum.any?(members, &(&1["uri"] == agent_uri and &1["pty_alive"] == true)) do
+          state
+        else
+          receive_surface_state_with_live_pty(ref, agent_uri, deadline)
+        end
+
+      {^ref, _other_event} ->
+        receive_surface_state_with_live_pty(ref, agent_uri, deadline)
+    after
+      remaining -> flunk("no conversation surface refresh contained the new live PTY")
+    end
+  end
+
+  defp receive_world_views_without_pty(ref, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^ref, {:push_event, "world:state", %{"views" => views}}} ->
+        if Enum.any?(views, &(&1["id"] == "pty")) do
+          receive_world_views_without_pty(ref, deadline)
+        else
+          views
+        end
+
+      {^ref, _other_event} ->
+        receive_world_views_without_pty(ref, deadline)
+    after
+      remaining -> flunk("no world:state event removed the stopped unopened PTY")
+    end
   end
 
   test "world template save persists installs and created sessions allow web anon access", %{

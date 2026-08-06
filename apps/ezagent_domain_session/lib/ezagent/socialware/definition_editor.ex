@@ -65,7 +65,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   @spec config_for_template(map(), URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
   def config_for_template(template_content, workspace_uri) when is_map(template_content) do
     with {:ok, resolved} <-
-           Installation.resolved_template_installs(template_content, workspace_uri) do
+           Installation.resolved_template_installs(template_content, workspace_uri),
+         :ok <- validate_composed_ingress(resolved) do
       config =
         Enum.reduce(resolved, empty_config(), fn {definition, object, install}, acc ->
           merge_definition(acc, definition, object, install)
@@ -315,8 +316,28 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       routing_rules: [],
       prompt_templates: %{},
       legends: %{},
+      ingress: nil,
       orchestrator_template_uri: nil
     }
+  end
+
+  defp validate_composed_ingress(resolved) do
+    ingresses =
+      resolved
+      |> Enum.map(fn {%Definition{} = definition, _object, _install} -> definition.ingress end)
+      |> Enum.reject(&is_nil/1)
+
+    case Enum.find(ingresses, &match?(%{action: :send}, &1)) do
+      %{behavior: behavior, action: :send} ->
+        {:error, {:recursive_session_ingress, behavior, :send}}
+
+      nil ->
+        case Enum.uniq(ingresses) do
+          [] -> :ok
+          [_ingress] -> :ok
+          conflicting -> {:error, {:conflicting_socialware_ingress, conflicting}}
+        end
+    end
   end
 
   defp merge_definition(acc, %Definition{} = definition, object, install) do
@@ -331,6 +352,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       routing_rules: acc.routing_rules ++ definition.routing_rules,
       prompt_templates: Map.merge(acc.prompt_templates, definition.prompt_templates),
       legends: Map.merge(acc.legends, definition.legends),
+      ingress: acc.ingress || definition.ingress,
       orchestrator_template_uri:
         acc.orchestrator_template_uri || definition.orchestrator_template_uri
     }
@@ -388,6 +410,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp apply_role_slot_choice(role, nil), do: role
 
   defp apply_role_slot_choice(%{fill: :agent} = role, choice) when is_map(choice) do
+    # Install-level choices deliberately override only install/flavor fields.
+    # Declarative role policy such as :credential_admission remains on `role`.
     role
     |> maybe_put_flavor(map_get(choice, :flavor))
     |> maybe_put_install_mode(map_get(choice, :mode) || map_get(choice, :install_mode))
@@ -439,6 +463,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
       routing_rules: if(legacy_rules == [], do: config.routing_rules, else: legacy_rules),
       prompt_templates: Map.merge(config.prompt_templates, legacy_prompts),
       legends: Map.merge(config.legends, legacy_legends),
+      ingress: config.ingress,
       orchestrator_template_uri: legacy_orchestrator || config.orchestrator_template_uri
     }
   end

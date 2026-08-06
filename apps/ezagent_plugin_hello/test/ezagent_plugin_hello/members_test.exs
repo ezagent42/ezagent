@@ -17,6 +17,7 @@ defmodule EzagentPluginHello.MembersTest do
     # RecipeRegistry (role-as-data). Boot seeds them, but that write is outside
     # this DataCase sandbox (and the ETS cache can be flushed) — reseed here.
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
 
     Enum.each(HelloApp.roles(), fn recipe ->
       {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
@@ -28,11 +29,21 @@ defmodule EzagentPluginHello.MembersTest do
     %{ws: ws}
   end
 
-  test "role_uri resolves a joined member by role_name", %{ws: ws} do
-    {:ok, session_uri, orch_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
+  test "no front-desk joins while the LLM is a credential-admission candidate", %{ws: ws} do
+    {:ok, session_uri, sender_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
 
-    assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-    assert {:ok, %URI{}} = Members.role_uri(session_uri, "llm")
+    assert sender_uri == session_uri
+    assert :error = Members.role_uri(session_uri, "front-desk")
+    assert :error = Members.role_uri(session_uri, "llm")
+
+    assert [
+             %{
+               role_name: "llm",
+               status: :pending_auth,
+               connection: {:api_key, %{provider: "deepseek"}}
+             }
+           ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
+
     assert :error = Members.role_uri(session_uri, "builder")
     assert :error = Members.role_uri(session_uri, "concierge")
     assert :error = Members.role_uri(session_uri, "nope")

@@ -1,7 +1,7 @@
 # SPEC: `:dispatch_returning` effect + close §11 Gate 3/6
 
 **Date**: 2026-05-29
-**Status**: implementing
+**Status**: implemented (implementation record in §12)
 **Closes**: SPEC #445 §11 Gate 3 + Gate 6
 **Related**: `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` §4.4 (effect grammar)
 **LOC analysis**: `docs/notes/2026-05-28-migration-loc-deadcode-analysis.md`
@@ -57,13 +57,14 @@ Effect shape:
 This is the structural fix for Gate 3 — handlers that today fall back to
 `Invocation.dispatch/1` can now express the same intent as a typed effect.
 
-### 2b. Re-export `data_owner_of/2` on `Ezagent.Behavior`
+### 2b. Re-export `data_owner_of/2` on the author-facing `Ezagent.ActionSet`
 
-Add `Ezagent.Behavior.data_owner_of(behavior, instance)` as a thin delegate to
-`Ezagent.CapabilityRegistry.data_owner_of/2`. Behavior authors call the new public surface;
-the existing `CapabilityRegistry` implementation is unchanged. The grep gate (which targets
-`CapabilityRegistry\.` in `apps/*/lib/ezagent/behavior/*.ex`) is satisfied because the call
-site now reads `Ezagent.Behavior.data_owner_of(...)`.
+Add `Ezagent.ActionSet.data_owner_of(behavior, instance)` as the author-facing delegate to
+`Ezagent.CapabilityRegistry.data_owner_of/2`. The delegate is implemented by the
+`Ezagent.ActionSet.Introspection` surface; Behavior authors call the public ActionSet helper,
+while the existing `CapabilityRegistry` implementation remains unchanged. The grep gate
+(which targets `CapabilityRegistry\.` in `apps/*/lib/ezagent/behavior/*.ex`) is satisfied
+because the call site now reads `Ezagent.ActionSet.data_owner_of(...)`.
 
 This is the structural fix for Gate 6. No new dispatch grammar is needed because the call is a
 pure synchronous introspection, not a cross-Kind interaction.
@@ -257,8 +258,8 @@ returning-effect pattern COULD apply — but the underlying call is a pure callb
 introspection (no Kind dispatch, no state, no side effects). Wrapping it in
 `:dispatch_returning` would be ceremony with no architectural value.
 
-Migration: per §2b, re-export `data_owner_of/2` on `Ezagent.Behavior` as a thin delegate, and
-swap the call site to `Ezagent.Behavior.data_owner_of(...)`. This satisfies the grep gate (the
+Migration: per §2b, re-export `data_owner_of/2` on `Ezagent.ActionSet` as a thin delegate, and
+swap the call site to `Ezagent.ActionSet.data_owner_of(...)`. This satisfies the grep gate (the
 "call CapabilityRegistry directly" prohibition) without forcing a fake dispatch through the
 runtime.
 
@@ -345,7 +346,33 @@ For the adversarial review pass (codex), the suspect surfaces:
 
 ---
 
-## 12. Out of scope
+## 12. Implementation record
+
+This SPEC is implemented in the current PR line. The implementation has been verified against
+the contract in this document:
+
+- `apps/ezagent_actor/lib/ezagent/behavior/effects.ex` accepts and buckets
+  `{:dispatch_returning, %Ezagent.Cmd{}, bind_as: name}` effects, preserving declaration order
+  with `:effect_returning` effects and requiring `bind_as`.
+- `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex` enriches and executes returning
+  dispatches through `Ezagent.Router.dispatch/1`, substitutes refs, and aborts before the
+  downstream buckets with `{:error, {:dispatch_returning_failed, name, reason}}`.
+- `apps/ezagent_actor/lib/ezagent/behavior.ex` exposes the author-facing
+  `Ezagent.ActionSet.data_owner_of/2` delegate through `ActionSet.Introspection`.
+- `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` uses that public helper,
+  removing the direct `CapabilityRegistry` dependency from the Behavior.
+- Coverage includes happy-path binding, ref substitution, mixed returning effects, required
+  `bind_as`, failure propagation, and downstream-effect aborts in
+  `behavior_test.exs` and `runtime_new_contract_dispatch_test.exs`.
+
+The implementation verification command is:
+
+```bash
+mix test apps/ezagent_actor/test/ezagent/behavior_test.exs \
+  apps/ezagent_core/test/ezagent/kind/runtime_new_contract_dispatch_test.exs
+```
+
+## 13. Out of scope
 
 - A static-check (`@before_compile`) that warns when a Cmd in a `:dispatch_returning` has
   `reply: :ignore`. Future hardening, not blocking this PR.

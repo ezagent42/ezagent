@@ -12,14 +12,15 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.ConversationPtyRefresh
   alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.LiveStateBuilder
   alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentPluginWorld.{Layouts, WorldLoading}
 
   @refresh_ms 2_000
-
   @impl true
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
@@ -61,6 +62,7 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_bootstrap_loading?, false)
      |> assign(:surface_refresh_entity_uri, nil)
      |> assign(:pending_surface_refreshes, MapSet.new())
+     |> assign(:pty_phase_subscriptions, MapSet.new())
      |> assign(:current_session_uri, nil)
      |> assign(:current_session_uri_str, nil)
      |> assign(:last_dispatch_status, "idle")
@@ -96,7 +98,11 @@ defmodule EzagentPluginWorld.WorldLive do
     layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
     state = LiveStateBuilder.state_for_route(route, socket, layout)
-    socket = maybe_subscribe_pty(socket, route)
+
+    socket =
+      socket
+      |> maybe_subscribe_pty(route)
+      |> subscribe_conversation_pty_phases(state)
 
     socket =
       socket
@@ -237,12 +243,17 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  def handle_info({:pty_phase, %URI{} = agent_uri, phase, _meta}, socket)
+  def handle_info({:pty_phase, %URI{} = agent_uri, phase, meta}, socket)
       when phase in [:starting, :running, :dead] do
-    if active_pty_agent?(socket, agent_uri) do
-      {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
-    else
-      {:noreply, socket}
+    cond do
+      definitive_pty_death?(phase, meta) and conversation_session_socket?(socket) ->
+        {:noreply, refresh_after_definitive_pty_death(socket, agent_uri)}
+
+      active_pty_agent?(socket, agent_uri) ->
+        {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
@@ -380,6 +391,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
       {:noreply,
        socket
+       |> subscribe_conversation_pty_phases(state)
        |> assign(:layout_json, Jason.encode!(layout))
        |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
        |> assign(:caller_json, Jason.encode!(caller_payload))
@@ -490,7 +502,9 @@ defmodule EzagentPluginWorld.WorldLive do
              target_uri,
              refresh_context(socket)
            ) do
-      push_event(socket, "world:surface_state", %{surface: id, state: state})
+      socket
+      |> subscribe_conversation_pty_phases(state)
+      |> push_event("world:surface_state", %{surface: id, state: state})
     else
       {:error, reason} ->
         raise ArgumentError, "invalid refresh surface #{inspect(id)}: #{inspect(reason)}"
@@ -565,9 +579,14 @@ defmodule EzagentPluginWorld.WorldLive do
         workspace = socket.assigns.current_workspace_uri
         caller = socket.assigns.current_entity_uri
         layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
-        state = LiveStateBuilder.state_for_route(route, socket, layout)
+
+        state =
+          route
+          |> LiveStateBuilder.state_for_route(socket, layout)
+          |> reconcile_refreshed_conversation_pty(socket, caller)
 
         socket
+        |> subscribe_conversation_pty_phases(state)
         |> assign(:layout_json, Jason.encode!(layout))
         |> assign(:world_state, state)
         |> assign(:world_state_json, Jason.encode!(state))
@@ -578,9 +597,29 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
+  defp reconcile_refreshed_conversation_pty(
+         refreshed_state,
+         %{assigns: %{world_state: current_state, current_caps: caps}},
+         caller
+       ) do
+    ConversationPtyRefresh.reconcile(refreshed_state, current_state, caller, caps)
+  end
+
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
     pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
   end
+
+  defp selected_pty_agent?(
+         %{assigns: %{world_state: state}},
+         %URI{} = agent_uri
+       ) do
+    selected = encode_uri(agent_uri)
+
+    Map.get(state, "agent_uri") == selected or
+      Map.get(state, "active_pty_agent_uri") == selected
+  end
+
+  defp selected_pty_agent?(_socket, %URI{}), do: false
 
   defp encode_uri(uri), do: LiveStateBuilder.encode_uri(uri)
 
@@ -933,6 +972,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          true <- provider != "" and key != "",
+         :ok <- api_key_admission_permits_save(socket, agent_uri, provider),
          {:ok, _result} <-
            Invocation.dispatch(%Invocation{
              target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
@@ -941,7 +981,7 @@ defmodule EzagentPluginWorld.WorldLive do
              ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :sync},
              origin: :authenticated_external
            }) do
-      refresh_api_keys_state(socket, agent_uri)
+      complete_api_key_admission_or_refresh(socket, agent_uri, provider, caller, caps)
     else
       false ->
         {:noreply,
@@ -1000,6 +1040,103 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:last_dispatch_status, "ok")
      |> push_event("world:state", state)}
+  end
+
+  # An API-key candidate is created only by the credential-admission flow. Once
+  # the existing secure agent-key surface saves its key, complete the matching
+  # server-owned attempt directly; no client-supplied source or candidate URI is
+  # ever used for admission. Ordinary agent-key edits retain their existing page
+  # refresh behavior.
+  defp complete_api_key_admission_or_refresh(socket, %URI{} = agent_uri, provider, caller, caps) do
+    case api_key_admission_for(socket, agent_uri, provider) do
+      {:ok, %{role_name: role_name, attempt_id: attempt_id, session_uri: session_uri}} ->
+        case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
+          {:ok, _joined} -> refresh_admission_conversation(socket, session_uri)
+          {:error, reason} -> refresh_admission_error(socket, session_uri, reason)
+          {:error, reason, _failed} -> refresh_admission_error(socket, session_uri, reason)
+        end
+
+      :not_an_admission ->
+        refresh_api_keys_state(socket, agent_uri)
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+    end
+  end
+
+  defp api_key_admission_for(socket, %URI{} = agent_uri, provider) do
+    assigns = Map.fetch!(socket, :assigns)
+    agent_uri_str = URI.to_string(agent_uri)
+
+    with %URI{} = session_uri <- Map.get(assigns, :current_session_uri),
+         true <- URI.to_string(session_uri) == get_in(assigns, [:world_state, "session_uri"]),
+         admission when not is_nil(admission) <-
+           Enum.find(AgentAdmission.list(session_uri), fn admission ->
+             Map.get(admission, :provisional_agent_uri) == agent_uri_str
+           end),
+         true <- api_key_admission_matches?(session_uri, agent_uri, provider, admission) do
+      {:ok,
+       %{
+         session_uri: session_uri,
+         role_name: Map.fetch!(admission, :role_name),
+         attempt_id: Map.fetch!(admission, :attempt_id),
+         candidate_uri: agent_uri
+       }}
+    else
+      nil -> :not_an_admission
+      false -> {:error, :stale_or_mismatched_agent_admission}
+      _ -> :not_an_admission
+    end
+  end
+
+  defp api_key_admission_permits_save(socket, %URI{} = agent_uri, provider) do
+    case api_key_admission_for(socket, agent_uri, provider) do
+      {:error, reason} -> {:error, reason}
+      _ -> :ok
+    end
+  end
+
+  @doc false
+  @spec api_key_admission_matches?(URI.t(), URI.t(), String.t(), map()) :: boolean()
+  def api_key_admission_matches?(
+        %URI{scheme: "session"} = _session_uri,
+        %URI{} = candidate_uri,
+        provider,
+        %{
+          role_name: role_name,
+          attempt_id: attempt_id,
+          provisional_agent_uri: provisional_agent_uri,
+          status: status,
+          connection: {:api_key, %{provider: declared_provider}}
+        }
+      )
+      when is_binary(provider) and is_binary(role_name) and is_binary(attempt_id) and
+             status in [:authenticating, :materializing] and is_binary(declared_provider) do
+    provisional_agent_uri == URI.to_string(candidate_uri) and provider == declared_provider
+  end
+
+  def api_key_admission_matches?(_session_uri, _candidate_uri, _provider, _admission), do: false
+
+  defp refresh_admission_conversation(socket, %URI{} = session_uri) do
+    layout = socket |> Map.fetch!(:assigns) |> get_in([:world_state, "layout"])
+
+    state =
+      session_uri
+      |> ConversationSessionState.state_for(socket)
+      |> Map.put("layout", layout)
+
+    {:noreply,
+     socket
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:last_dispatch_status, "ok")
+     |> ConversationActions.push_members()
+     |> push_event("world:state", state)}
+  end
+
+  defp refresh_admission_error(socket, %URI{} = session_uri, reason) do
+    {:noreply, refreshed} = refresh_admission_conversation(socket, session_uri)
+    {:noreply, assign(refreshed, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
   end
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
@@ -1151,6 +1288,74 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp maybe_subscribe_pty(socket, _route), do: socket
 
+  defp subscribe_conversation_pty_phases(
+         socket,
+         %{"component" => "conversation"} = state
+       ) do
+    if connected?(socket) and Map.get(state, "access_denied") != true and
+         Enum.any?(Map.get(state, "views", []), &(Map.get(&1, "id") == "pty")) do
+      state
+      |> conversation_pty_phase_candidates()
+      |> Enum.reduce(socket, &subscribe_pty_phase/2)
+    else
+      socket
+    end
+  end
+
+  defp subscribe_conversation_pty_phases(socket, _state), do: socket
+
+  defp conversation_pty_phase_candidates(state) do
+    member_candidates =
+      for %{"kind" => "agent", "pty_alive" => true, "uri" => uri} <-
+            Map.get(state, "members", []),
+          do: uri
+
+    admission_candidates =
+      for %{
+            "status" => status,
+            "provisional_agent_uri" => uri
+          } <- Map.get(state, "agent_admissions", []),
+          status in ["authenticating", "materializing"],
+          do: uri
+
+    (member_candidates ++ admission_candidates)
+    |> Enum.reduce(MapSet.new(), fn uri_string, candidates ->
+      case parse_live_agent_uri(uri_string) do
+        {:ok, agent_uri} -> MapSet.put(candidates, agent_uri)
+        :error -> candidates
+      end
+    end)
+  end
+
+  defp subscribe_pty_phase(
+         %URI{} = agent_uri,
+         %{assigns: assigns} = socket
+       ) do
+    key = encode_uri(agent_uri)
+    subscriptions = Map.get(assigns, :pty_phase_subscriptions, MapSet.new())
+
+    if MapSet.member?(subscriptions, key) do
+      socket
+    else
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "pty:phase:" <> key)
+      assign(socket, :pty_phase_subscriptions, MapSet.put(subscriptions, key))
+    end
+  end
+
+  defp parse_live_agent_uri(uri_string) when is_binary(uri_string) do
+    with {:ok, %URI{} = agent_uri} <- Ezagent.URI.parse(uri_string),
+         true <- Ezagent.URI.type?(agent_uri, :agent),
+         true <- Ezagent.Domain.Pty.alive?(agent_uri) do
+      {:ok, agent_uri}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp parse_live_agent_uri(_uri_string), do: :error
+
   defp refresh_pty_state(socket) do
     case socket.assigns.world_state do
       %{"agent_uri" => agent_uri_str} ->
@@ -1167,6 +1372,68 @@ defmodule EzagentPluginWorld.WorldLive do
 
       _ ->
         socket
+    end
+  end
+
+  defp refresh_after_definitive_pty_death(
+         %{
+           assigns: %{
+             world_state: %{"component" => "conversation"},
+             current_session_uri: %URI{} = session_uri,
+             current_entity_uri: %URI{} = caller
+           }
+         } = socket,
+         %URI{} = agent_uri
+       ) do
+    views = Ezagent.World.ConversationData.session_views(session_uri, caller)
+
+    updates =
+      if selected_pty_agent?(socket, agent_uri) do
+        clear_selected_pty_updates(socket, views)
+      else
+        %{"views" => views}
+      end
+
+    update_pty_state(socket, updates)
+  end
+
+  defp conversation_session_socket?(%{
+         assigns: %{
+           world_state: %{"component" => "conversation"},
+           current_session_uri: %URI{},
+           current_entity_uri: %URI{}
+         }
+       }),
+       do: true
+
+  defp conversation_session_socket?(_socket), do: false
+
+  defp definitive_pty_death?(:dead, %{respawning: false}), do: true
+  defp definitive_pty_death?(:dead, %{respawning: true}), do: false
+  defp definitive_pty_death?(:dead, %{reason: :shutdown}), do: true
+  defp definitive_pty_death?(:dead, %{reason: {:shutdown, _reason}}), do: true
+  defp definitive_pty_death?(:dead, %{reason: {:respawn_halted, _reason}}), do: true
+  defp definitive_pty_death?(_phase, _meta), do: false
+
+  defp clear_selected_pty_updates(
+         %{assigns: %{world_state: world_state}},
+         views
+       ) do
+    updates = %{
+      "views" => views,
+      "active_pty_agent_uri" => nil,
+      "agent_uri" => nil,
+      "agent_detail_path" => nil,
+      "agent_status" => nil,
+      "pty_alive" => false,
+      "pty_phase" => "dead",
+      "pty_initial_buffer" => ""
+    }
+
+    if Map.get(world_state, "active_view") == "pty" do
+      Map.put(updates, "active_view", ConversationPtyRefresh.fallback_view(views))
+    else
+      updates
     end
   end
 

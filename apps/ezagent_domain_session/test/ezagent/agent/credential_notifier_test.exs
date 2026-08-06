@@ -6,6 +6,8 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
   """
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Ezagent.Agent.CredentialNotifier
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
@@ -114,6 +116,56 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
       assert_receive {:notification, ^owner,
                       %{type: :agent_auth_failed, body: %{agent_uri: ^worker}}},
                      2_000
+    end
+  end
+
+  describe "joined admission reconciliation" do
+    test "reconciles the failed agent before continuing notification handling" do
+      test_pid = self()
+
+      {:ok, notifier} =
+        start_supervised(
+          {CredentialNotifier,
+           name: nil,
+           reconcile_fun: fn agent_uri ->
+             send(test_pid, {:admission_reconciled, agent_uri})
+             :ok
+           end}
+        )
+
+      uri = agent_uri()
+      send(notifier, {:pty_auth_failed, uri, :cc_auth_failure_0})
+
+      assert_receive {:admission_reconciled, ^uri}, 1_000
+      assert Process.alive?(notifier)
+    end
+
+    test "logs reconciliation failures without crashing the notifier" do
+      test_pid = self()
+      reason = {:forced_reconciliation_failure, System.unique_integer([:positive])}
+
+      {:ok, notifier} =
+        start_supervised(
+          {CredentialNotifier,
+           name: nil,
+           reconcile_fun: fn agent_uri ->
+             send(test_pid, {:reconciliation_attempted, agent_uri})
+             {:error, reason}
+           end}
+        )
+
+      uri = agent_uri()
+
+      log =
+        capture_log(fn ->
+          send(notifier, {:pty_auth_failed, uri, :cc_auth_failure_0})
+          assert_receive {:reconciliation_attempted, ^uri}, 1_000
+          Process.sleep(20)
+        end)
+
+      assert log =~ "admission reconciliation"
+      assert log =~ inspect(reason)
+      assert Process.alive?(notifier)
     end
   end
 end

@@ -113,6 +113,32 @@ defmodule Ezagent.Credential.ResolverTest do
              })
   end
 
+  test "session-local policy selects no reusable credential source" do
+    assert {:ok, nil} =
+             Resolver.pick_credential_source(%{
+               credential_source_policy: :session_local,
+               explicit_source: nil,
+               owner_uri: @owner,
+               workspace_uri: @ws,
+               flavor: "cc",
+               credential_required?: true,
+               user_source_lookup: fn -> flunk("user source must not be read") end,
+               workspace_shared_lookup: fn -> flunk("workspace source must not be read") end
+             })
+  end
+
+  test "session-local policy rejects an explicit credential source" do
+    assert {:error, :credential_source_forbidden} =
+             Resolver.pick_credential_source(%{
+               credential_source_policy: :session_local,
+               explicit_source: @explicit,
+               owner_uri: @owner,
+               workspace_uri: @ws,
+               flavor: "cc",
+               source_available?: &always_available/1
+             })
+  end
+
   # ── (c) absent vs revoked distinction ──────────────────────────────────────
 
   test "ABSENT user pointer FALLS THROUGH (here: to the fail-loud workspace step, not an error about the user source)" do

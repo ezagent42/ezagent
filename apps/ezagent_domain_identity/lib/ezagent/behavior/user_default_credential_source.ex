@@ -50,7 +50,8 @@ defmodule Ezagent.ActionSet.UserDefaultCredentialSource do
       flavor: :string,
       source_uri: :string,
       workspace: :string,
-      owner_uri: {:option, :string}
+      owner_uri: {:option, :string},
+      expected_source_uri: {:option, :string}
     },
     returns: %{
       flavor: :string,
@@ -81,6 +82,8 @@ defmodule Ezagent.ActionSet.UserDefaultCredentialSource do
     flavor = Map.get(args, :flavor)
     source_uri = Map.get(args, :source_uri)
     workspace = Map.get(args, :workspace)
+    expected_source_uri = Map.get(args, :expected_source_uri)
+    expected_source? = Map.has_key?(args, :expected_source_uri)
     # The owner is DERIVED from the dispatched target (`ctx.self_uri`) — the User Kind
     # this action was cap-checked against (runtime step 5.5). It is NEVER read from args:
     # the caller's authorization is bound to the target URI, so trusting an args-supplied
@@ -93,7 +96,16 @@ defmodule Ezagent.ActionSet.UserDefaultCredentialSource do
 
     with :ok <- check_owner_arg(Map.get(args, :owner_uri), owner),
          true <- is_binary(flavor) and is_binary(source_uri) and is_binary(workspace),
-         {:ok, _row} <- persist_validated(owner, workspace, flavor, source_uri, set_by) do
+         {:ok, _row} <-
+           persist_validated(
+             owner,
+             workspace,
+             flavor,
+             source_uri,
+             set_by,
+             expected_source?,
+             expected_source_uri
+           ) do
       cur = ctx[:read].(:set_count, 0)
 
       {:ok, %{flavor: flavor, source_uri: source_uri},
@@ -160,16 +172,49 @@ defmodule Ezagent.ActionSet.UserDefaultCredentialSource do
   #   2. source's workspace == ws        — else {:error, :source_workspace_mismatch};
   #   3. source belongs to owner (spawn lineage) — else {:error, :source_owner_mismatch};
   #   4. source's flavor == flavor        — else {:error, :source_flavor_mismatch}.
-  defp persist_validated(owner, ws, flavor, source_uri, set_by) do
-    with {:ok, source} <- Ezagent.URI.parse(source_uri),
-         :ok <- validate_source(source, owner, ws, flavor) do
-      %{owner_uri: owner, workspace_uri: ws, flavor: flavor, source_uri: source_uri}
-      |> UserDefaultSource.changeset(set_by || owner)
-      |> Repo.insert(
-        on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
-        conflict_target: :id
-      )
+  defp persist_validated(
+         owner,
+         ws,
+         flavor,
+         source_uri,
+         set_by,
+         expected_source?,
+         expected_source_uri
+       ) do
+    with_default_source_lock(owner, ws, flavor, fn ->
+      with {:ok, source} <- Ezagent.URI.parse(source_uri),
+           :ok <- validate_source(source, owner, ws, flavor),
+           :ok <-
+             require_expected_source(
+               owner,
+               ws,
+               flavor,
+               expected_source?,
+               expected_source_uri
+             ) do
+        %{owner_uri: owner, workspace_uri: ws, flavor: flavor, source_uri: source_uri}
+        |> UserDefaultSource.changeset(set_by || owner)
+        |> Repo.insert(
+          on_conflict: {:replace, [:source_uri, :set_by, :updated_at]},
+          conflict_target: :id
+        )
+      end
+    end)
+  end
+
+  defp require_expected_source(_owner, _ws, _flavor, false, _expected), do: :ok
+
+  defp require_expected_source(owner, ws, flavor, true, expected) do
+    if UserDefaultSource.resolve(owner, ws, flavor) == expected do
+      :ok
+    else
+      {:error, :default_source_changed}
     end
+  end
+
+  defp with_default_source_lock(owner, workspace, flavor, fun) do
+    resource = {__MODULE__, :default_credential_source, owner, workspace, flavor}
+    :global.trans({resource, self()}, fun)
   end
 
   defp validate_source(%URI{} = source, owner, ws, flavor) do

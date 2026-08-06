@@ -6,6 +6,88 @@ defmodule Ezagent.ActionSet.Session.Delivery do
   alias Ezagent.{Cmd, Message}
   alias Ezagent.Session.InternalReads
 
+  @doc false
+  @spec dispatch_declared_ingress(URI.t(), Message.t(), map() | nil) ::
+          :ok | {:error, term()}
+  def dispatch_declared_ingress(_session_uri, _message, nil), do: :ok
+
+  def dispatch_declared_ingress(
+        %URI{},
+        %Message{},
+        %{behavior: behavior, action: :send}
+      )
+      when is_atom(behavior) do
+    {:error, {:recursive_session_ingress, behavior, :send}}
+  end
+
+  def dispatch_declared_ingress(
+        %URI{} = session_uri,
+        %Message{} = message,
+        %{behavior: behavior, action: action}
+      )
+      when is_atom(behavior) and is_atom(action) do
+    target = Ezagent.URI.with_action(session_uri, behavior.state_slice(), action)
+    admin = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
+      Ezagent.Router.dispatch(%Cmd{
+        target: target,
+        action: action,
+        args: %{message: message, session_uri: session_uri},
+        ctx: %{
+          caller: session_uri,
+          authenticated_principal: session_uri,
+          caps: MapSet.new([cap]),
+          reply: :ignore
+        },
+        origin: :trusted_internal
+      })
+    end
+  end
+
+  @doc false
+  @spec exclude_protected_role_recipients(
+          [{URI.t(), map() | nil}],
+          map(),
+          [String.t()]
+        ) :: [{URI.t(), map() | nil}]
+  def exclude_protected_role_recipients(recipients, _members, []) when is_list(recipients),
+    do: recipients
+
+  def exclude_protected_role_recipients(recipients, members, protected_roles)
+      when is_list(recipients) and is_map(members) and is_list(protected_roles) do
+    protected_roles = MapSet.new(protected_roles)
+
+    protected_members =
+      members
+      |> Enum.reduce(MapSet.new(), fn
+        {%URI{} = member_uri, member_meta}, acc when is_map(member_meta) ->
+          if MapSet.member?(protected_roles, member_role(member_meta)) do
+            MapSet.put(acc, member_key(member_uri))
+          else
+            acc
+          end
+
+        _member, acc ->
+          acc
+      end)
+
+    Enum.reject(recipients, fn
+      {%URI{} = recipient, _rule_ctx} ->
+        MapSet.member?(protected_members, member_key(recipient))
+
+      _recipient ->
+        false
+    end)
+  end
+
+  defp member_role(member_meta),
+    do: Map.get(member_meta, :role_name) || Map.get(member_meta, "role_name")
+
+  defp member_key(%URI{} = uri),
+    do: uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
+
   @doc """
   Fan ONE recipient's delivery OFF the `handle_send` hot path
   (send-echo-decouple, 2026-07-08; per-recipient serialization per codex

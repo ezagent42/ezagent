@@ -9,9 +9,21 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
   prefix).
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [ensure_workspace_kind!: 1]
+
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
+  alias Ezagent.Entity.Session
   alias EzagentDomainUi.Pty.TerminalView
+
+  @workspace_uri URI.new!("workspace://system")
+  @owner_uri URI.new!("entity://system/user/admin")
+
+  setup do
+    ensure_workspace_kind!(@workspace_uri)
+    :ok
+  end
 
   describe "SessionView contract" do
     test "id/label/icon are stable" do
@@ -41,6 +53,35 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
         URI.new!("session://team-alpha/default/missing-#{System.unique_integer([:positive])}")
 
       refute TerminalView.applies_to?(missing)
+    end
+
+    test "accepts a materializing admission with a live PTY" do
+      session_uri = live_session!()
+      candidate = entity_uri("materializing")
+      start_live_pty!(candidate)
+
+      put_admissions!(session_uri, [admission("materializing", :materializing, candidate)])
+
+      assert TerminalView.applies_to?(session_uri)
+    end
+
+    test "rejects inactive, malformed, non-entity, and non-live admission candidates" do
+      session_uri = live_session!()
+      inactive_candidate = entity_uri("inactive")
+      non_entity_candidate = URI.new!("resource://system/pty/non-entity-#{unique_suffix()}")
+      non_live_candidate = entity_uri("non-live")
+      start_live_pty!(inactive_candidate)
+      start_live_pty!(non_entity_candidate)
+
+      put_admissions!(session_uri, [
+        admission("inactive", :joined, inactive_candidate),
+        admission("non-entity", :materializing, non_entity_candidate),
+        admission("non-live", :materializing, non_live_candidate),
+        %{role_name: "malformed", status: :materializing},
+        %{role_name: "bad-uri", status: :materializing, provisional_agent_uri: "not a URI"}
+      ])
+
+      refute TerminalView.applies_to?(session_uri)
     end
   end
 
@@ -91,5 +132,52 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
       refute src =~ "starts_with?",
              "TerminalView must NOT hard-code flavor-name prefix checks — that was the old PtyView shape"
     end
+  end
+
+  defp live_session! do
+    session_uri =
+      URI.new!("session://system/generic/terminal-view-#{unique_suffix()}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Session.behaviors(),
+        owner_uri: @owner_uri
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
+    on_exit(fn -> terminate_session(session_uri) end)
+    session_uri
+  end
+
+  defp start_live_pty!(uri) do
+    {:ok, pid} = Ezagent.Domain.Pty.start(uri, %{cwd: File.cwd!(), test_mode: true})
+    on_exit(fn -> if Process.alive?(pid), do: Ezagent.Domain.Pty.stop(uri) end)
+    assert Ezagent.Domain.Pty.alive?(uri)
+  end
+
+  defp put_admissions!(session_uri, admissions) do
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(:agent_admissions, Map.new(admissions, &{&1.role_name, &1}))
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+  end
+
+  defp admission(role_name, status, provisional_agent_uri) do
+    %{
+      role_name: role_name,
+      status: status,
+      provisional_agent_uri: URI.to_string(provisional_agent_uri)
+    }
+  end
+
+  defp entity_uri(label),
+    do: URI.new!("entity://system/agent/#{label}-#{unique_suffix()}")
+
+  defp unique_suffix, do: System.unique_integer([:positive])
+
+  defp terminate_session(uri) do
+    if Ezagent.Kind.alive?(uri), do: Ezagent.Kind.terminate(uri)
   end
 end

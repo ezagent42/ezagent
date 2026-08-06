@@ -192,7 +192,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
     refute_receive {:pty_output, _, _}, 100
   end
 
-  test "the creator's existing manage cap opens it and subscribes" do
+  test "a manage-cap holder cannot open an unrelated agent through a session PTY action" do
     cap = creator_cap()
     # Actor-extraction C1: switch_to_pty re-derives caps FRESH via
     # PresenterCaps.load → EntityCaps.load(@creator); the creator must DURABLY
@@ -232,13 +232,14 @@ defmodule Ezagent.World.PtyConversationExitTest do
     end)
 
     {:noreply, socket} =
-      ConversationActions.switch_to_pty(
-        socket_with(MapSet.new([cap])),
-        @session,
-        URI.to_string(@agent)
+      ConversationActions.handle_dispatch(
+        socket_with(MapSet.new([cap]))
+        |> Phoenix.Component.assign(:current_session_uri, @session),
+        "session.pty.open",
+        %{"session_uri" => URI.to_string(@session), "agent" => URI.to_string(@agent)}
       )
 
-    refute socket.assigns[:last_dispatch_status] == "error:unauthorized"
+    assert socket.assigns.last_dispatch_status == "error:session_pty_target_unrelated"
 
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
@@ -246,7 +247,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
       {:pty_output, @agent, "mine"}
     )
 
-    assert_receive {:pty_output, _, "mine"}, 500
+    refute_receive {:pty_output, _, "mine"}, 100
   end
 end
 
@@ -264,16 +265,49 @@ defmodule Ezagent.World.PtyChunkBindingTest do
   """
   use EzagentCore.DataCase, async: false
 
+  import Ezagent.Test.CapHelper, only: [ensure_workspace_kind!: 1]
+
+  alias Ezagent.ActionSet.Session, as: SessionBehavior
+  alias Ezagent.Entity.Session
   alias EzagentPluginWorld.WorldLive
 
   @a "entity://team-alpha/agent/cc_alpha"
   @b "entity://team-alpha/agent/cc_beta"
+  @workspace_uri Ezagent.URI.new!("workspace://system")
+  @owner_uri Ezagent.URI.new!("entity://system/user/admin")
+
+  setup do
+    ensure_workspace_kind!(@workspace_uri)
+    :ok
+  end
 
   defp socket_showing(agent_uri_str) do
     %Phoenix.LiveView.Socket{
       assigns: %{
         __changed__: %{},
         world_state: %{"component" => "pty_terminal", "agent_uri" => agent_uri_str}
+      }
+    }
+  end
+
+  defp conversation_socket_showing(agent_uri_str, session_uri) do
+    %Phoenix.LiveView.Socket{
+      assigns: %{
+        __changed__: %{},
+        current_entity_uri: @owner_uri,
+        current_session_uri: session_uri,
+        world_state: %{
+          "component" => "conversation",
+          "views" => [
+            %{"id" => "conversation", "label" => "Conversation", "mode" => "chat"},
+            %{"id" => "pty", "label" => "Terminal", "mode" => "pty"}
+          ],
+          "active_view" => "pty",
+          "active_pty_agent_uri" => agent_uri_str,
+          "agent_uri" => agent_uri_str,
+          "pty_alive" => true,
+          "pty_phase" => "running"
+        }
       }
     }
   end
@@ -301,5 +335,182 @@ defmodule Ezagent.World.PtyChunkBindingTest do
       WorldLive.handle_info({:pty_phase, Ezagent.URI.new!(@b), :dead, %{}}, input)
 
     assert out == input
+  end
+
+  test "an ordinary child death keeps the active PTY bound through its respawn phases" do
+    agent_uri = Ezagent.URI.new!(@a)
+    session_uri = live_session!()
+
+    {:noreply, dead} =
+      WorldLive.handle_info(
+        {:pty_phase, agent_uri, :dead, %{reason: :econnreset}},
+        conversation_socket_showing(@a, session_uri)
+      )
+
+    assert dead.assigns.world_state["active_view"] == "pty"
+    assert dead.assigns.world_state["active_pty_agent_uri"] == @a
+    assert dead.assigns.world_state["agent_uri"] == @a
+    assert dead.assigns.world_state["pty_phase"] == "dead"
+
+    {:noreply, starting} =
+      WorldLive.handle_info({:pty_phase, agent_uri, :starting, %{}}, dead)
+
+    assert starting.assigns.world_state["pty_phase"] == "starting"
+
+    {:noreply, running} =
+      WorldLive.handle_info({:pty_phase, agent_uri, :running, %{}}, starting)
+
+    assert running.assigns.world_state["pty_phase"] == "running"
+  end
+
+  test "a shutdown-shaped respawning child death keeps the active PTY bound" do
+    session_uri = live_session!()
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown, respawning: true}},
+        conversation_socket_showing(@a, session_uri)
+      )
+
+    assert out.assigns.world_state["active_view"] == "pty"
+    assert out.assigns.world_state["active_pty_agent_uri"] == @a
+    assert out.assigns.world_state["agent_uri"] == @a
+    assert out.assigns.world_state["pty_phase"] == "dead"
+  end
+
+  test "a respawn-halted death invalidates a no-longer-applicable PTY" do
+    session_uri = live_session!()
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead,
+         %{reason: {:respawn_halted, :too_many_failures}}},
+        conversation_socket_showing(@a, session_uri)
+      )
+
+    assert out.assigns.world_state["active_view"] == "conversation"
+    assert out.assigns.world_state["active_pty_agent_uri"] == nil
+    assert out.assigns.world_state["agent_uri"] == nil
+    assert out.assigns.world_state["pty_alive"] == false
+    assert out.assigns.world_state["pty_phase"] == "dead"
+  end
+
+  test "a definitive death clears its active target even when another PTY keeps the tab" do
+    session_uri = live_session!()
+    other_agent = entity_uri("other-live")
+    start_live_pty!(other_agent)
+
+    put_admissions!(session_uri, [
+      admission("dead", :materializing, Ezagent.URI.new!(@a)),
+      admission("other", :materializing, other_agent)
+    ])
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown}},
+        conversation_socket_showing(@a, session_uri)
+      )
+
+    assert Enum.any?(out.assigns.world_state["views"], &(&1["id"] == "pty"))
+    assert out.assigns.world_state["active_view"] == "conversation"
+    assert out.assigns.world_state["active_pty_agent_uri"] == nil
+    assert out.assigns.world_state["agent_uri"] == nil
+    assert out.assigns.world_state["pty_alive"] == false
+    assert out.assigns.world_state["pty_phase"] == "dead"
+  end
+
+  test "a definitive death refreshes views for a non-active PTY without overwriting active phase" do
+    session_uri = live_session!()
+
+    put_admissions!(session_uri, [
+      admission("last", :materializing, Ezagent.URI.new!(@a))
+    ])
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown}},
+        conversation_socket_showing(@b, session_uri)
+      )
+
+    refute Enum.any?(out.assigns.world_state["views"], &(&1["id"] == "pty"))
+    assert out.assigns.world_state["active_pty_agent_uri"] == @b
+    assert out.assigns.world_state["agent_uri"] == @b
+    assert out.assigns.world_state["pty_phase"] == "running"
+  end
+
+  test "a definitive death clears a cached selected PTY without changing the current view" do
+    session_uri = live_session!()
+    other_agent = entity_uri("cached-other-live")
+    start_live_pty!(other_agent)
+
+    put_admissions!(session_uri, [
+      admission("dead", :materializing, Ezagent.URI.new!(@a)),
+      admission("other", :materializing, other_agent)
+    ])
+
+    input =
+      conversation_socket_showing(@a, session_uri)
+      |> Phoenix.Component.assign(:world_state, %{
+        conversation_socket_showing(@a, session_uri).assigns.world_state
+        | "active_view" => "conversation"
+      })
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown, respawning: false}},
+        input
+      )
+
+    assert Enum.any?(out.assigns.world_state["views"], &(&1["id"] == "pty"))
+    assert out.assigns.world_state["active_view"] == "conversation"
+    assert out.assigns.world_state["active_pty_agent_uri"] == nil
+    assert out.assigns.world_state["agent_uri"] == nil
+    assert out.assigns.world_state["pty_alive"] == false
+  end
+
+  defp live_session! do
+    session_uri =
+      Ezagent.URI.new!("session://system/generic/pty-phase-#{System.unique_integer([:positive])}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Session.behaviors(),
+        owner_uri: @owner_uri
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
+
+    on_exit(fn ->
+      if Ezagent.Kind.alive?(session_uri), do: Ezagent.Kind.terminate(session_uri)
+    end)
+
+    session_uri
+  end
+
+  defp start_live_pty!(agent_uri) do
+    {:ok, pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: File.cwd!(), test_mode: true})
+    on_exit(fn -> if Process.alive?(pid), do: Ezagent.Domain.Pty.stop(agent_uri) end)
+    assert Ezagent.Domain.Pty.alive?(agent_uri)
+  end
+
+  defp put_admissions!(session_uri, admissions) do
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(:agent_admissions, Map.new(admissions, &{&1.role_name, &1}))
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+  end
+
+  defp admission(role_name, status, provisional_agent_uri) do
+    %{
+      role_name: role_name,
+      status: status,
+      provisional_agent_uri: URI.to_string(provisional_agent_uri)
+    }
+  end
+
+  defp entity_uri(label) do
+    Ezagent.URI.new!("entity://system/agent/#{label}-#{System.unique_integer([:positive])}")
   end
 end

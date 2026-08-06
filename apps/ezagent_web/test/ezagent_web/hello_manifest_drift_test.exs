@@ -7,7 +7,7 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     "name" => "hello",
     "version" => "0.1.0",
     "title" => "Hello website builder",
-    "description" => "Build and publish a website through a two-agent Hello team.",
+    "description" => "Build and publish a website with a reusable LLM agent.",
     "uses" => ["hello"],
     "bases" => [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
     "shape" => [
@@ -18,16 +18,11 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     "views" => ["hello_render"],
     "roles" => [
       %{
-        "role_name" => "front-desk",
-        "fill" => "agent",
-        "recipe" => "hello.front-desk",
-        "flavor" => "hello"
-      },
-      %{
         "role_name" => "llm",
         "fill" => "agent",
         "recipe" => "hello.llm",
         "flavor" => "curl",
+        "credential_admission" => "before_session_join",
         "config" => %{
           "provider" => "deepseek",
           "api_url" => "https://api.deepseek.com/chat/completions",
@@ -35,21 +30,19 @@ defmodule EzagentWeb.HelloManifestDriftTest do
         }
       }
     ],
-    "routing_rules" => [
-      %{
-        "matcher" => %{"type" => "always"},
-        "receivers" => ["front-desk"],
-        "rule_set" => "default",
-        "position" => 0
-      }
-    ],
+    "routing_rules" => [],
     "visibility_policy" => %{
       "scope" => "public",
       "publish_policy" => "auto",
       "web_anon_access" => true
     },
     "prompt_templates" => %{},
-    "legends" => %{}
+    "legends" => %{},
+    "ingress" => %{
+      "behavior" => "Ezagent.ActionSet.HelloSessionActions",
+      "action" => "route_inbound",
+      "protected_roles" => ["llm"]
+    }
   }
 
   test "the shipped hello manifest exists in the deploy-seed lane" do
@@ -58,11 +51,24 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     assert File.exists?(path)
   end
 
-  test "the shipped manifest is the two-agent curl-backed Hello definition" do
+  test "the shipped manifest declares Session ingress and only a gated LLM role" do
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(Demo.Hello.manifest_path()))
     assert parsed == @reference
     assert Enum.count(parsed["roles"], &(&1["flavor"] == "curl")) == 1
-    assert Enum.find(parsed["roles"], &(&1["role_name"] == "llm"))["flavor"] == "curl"
+
+    assert %{
+             "flavor" => "curl",
+             "credential_admission" => "before_session_join"
+           } = Enum.find(parsed["roles"], &(&1["role_name"] == "llm"))
+
+    assert Enum.map(parsed["roles"], & &1["role_name"]) == ["llm"]
+    assert parsed["routing_rules"] == []
+
+    assert parsed["ingress"] == %{
+             "behavior" => "Ezagent.ActionSet.HelloSessionActions",
+             "action" => "route_inbound",
+             "protected_roles" => ["llm"]
+           }
   end
 
   test "Demo.Hello loads the shipped manifest and supports only a name override" do

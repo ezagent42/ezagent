@@ -112,6 +112,7 @@ defmodule Ezagent.Credential.Resolver do
            owner_uri: owner_uri,
            workspace_uri: workspace_uri,
            flavor: flavor,
+           credential_source_policy: Map.get(inputs, :credential_source_policy),
            credential_required?: Map.get(inputs, :credential_required?, true),
            source_available?: Map.get(inputs, :source_available?, &default_source_available?/1)
          }) do
@@ -152,6 +153,7 @@ defmodule Ezagent.Credential.Resolver do
   @spec pick_credential_source(map()) :: {:ok, URI.t() | nil} | {:error, term()}
   def pick_credential_source(opts) when is_map(opts) do
     explicit = Map.get(opts, :explicit_source)
+    source_policy = Map.get(opts, :credential_source_policy)
     owner_uri = Map.fetch!(opts, :owner_uri)
     workspace_uri = Map.get(opts, :workspace_uri)
     flavor = Map.get(opts, :flavor)
@@ -171,7 +173,19 @@ defmodule Ezagent.Credential.Resolver do
         workspace_shared_source(workspace_uri, flavor)
       end)
 
-    do_pick(explicit, user_lookup, ws_lookup, required?, available?)
+    case {source_policy, explicit} do
+      {policy, nil} when policy in [:session_local, "session_local"] ->
+        {:ok, nil}
+
+      {policy, %URI{}} when policy in [:session_local, "session_local"] ->
+        {:error, :credential_source_forbidden}
+
+      {nil, _explicit} ->
+        do_pick(explicit, user_lookup, ws_lookup, required?, available?)
+
+      {policy, _explicit} ->
+        {:error, {:invalid_credential_source_policy, policy}}
+    end
   end
 
   # 1. explicit source named — must be available, else fail loud (no fall-through).

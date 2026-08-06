@@ -20,6 +20,7 @@ defmodule EzagentPluginHello.PageView do
   use Phoenix.Component
 
   alias Ezagent.ActionSet.Surface
+  alias Ezagent.Socialware.SessionReads
 
   # T2-2b — this view is cap-gated: its visibility requires the caller to hold
   # the `{Session, :hello_render}` cap (declared by HelloRender). The unified
@@ -38,8 +39,11 @@ defmodule EzagentPluginHello.PageView do
 
   @impl true
   def applies_to?(%URI{} = session_uri) do
-    hello_session?(session_uri) and
-      match?({:ok, surface} when is_map(surface), Ezagent.Kind.read(session_uri, :surface, spawn: :never))
+    # Applicability is configuration, not liveness. A persisted hello install
+    # must keep its Page tab while the session Kind is cold (for example after
+    # an application restart); reading the live-only surface here made the tab
+    # disappear until some unrelated action happened to wake the session.
+    hello_session?(session_uri)
   rescue
     _ -> false
   catch
@@ -92,16 +96,36 @@ defmodule EzagentPluginHello.PageView do
     """
   end
 
-  # Internal-only: the external surface renders the approved tree through the
-  # socialware external SPA, not this SessionView. (external_render?/0 +
-  # external_render/1 are optional callbacks — omitted → internal-only.)
+  # The world conversation shell uses this declaration to route the Page tab
+  # to its generic external-preview iframe. The preview itself is rendered by
+  # the same approved Surface projection as the public socialware page.
+  @impl true
+  def external_render?, do: true
+
+  @impl true
+  def external_render(%URI{} = session_uri), do: external_render(session_uri, nil)
+
+  def external_render(_), do: nil
+
+  @doc "Caller-aware approved Surface projection for the generic preview path."
+  @spec external_render(URI.t(), URI.t() | term()) :: map() | nil
+  def external_render(%URI{} = session_uri, caller) do
+    case SessionReads.external_surface(caller, session_uri) do
+      {:ok, surface} -> Surface.external_tree(surface)
+      {:error, _} -> nil
+    end
+  end
+
+  def external_render(_, _), do: nil
 
   defp module_url do
     Application.get_env(:ezagent_plugin_hello, :hello_module_url, "/assets/hello/main.js")
   end
 
   defp load_surface(%URI{} = session_uri) do
-    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
+    # Rendering is the point where waking a cold session is appropriate. This
+    # rehydrates the persisted surface when the user actually opens the Page.
+    case Ezagent.Kind.read(session_uri, :surface) do
       {:ok, surface} -> surface
       _ -> %{}
     end

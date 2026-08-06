@@ -152,6 +152,7 @@ defmodule Ezagent.Socialware.Conformance do
       |> add(:requires_cycle_free, check_requires_cycle_free(definition, ws, lookup_fun))
       |> add(:bases_shape_load, check_modules_load(definition.bases ++ definition.shape))
       |> add(:views_exist_caps_registered, check_views(definition.views))
+      |> add(:ingress_action_registered, check_ingress(definition.ingress))
       |> add(:agent_recipes_resolve, check_agent_recipes(definition.roles, ws))
       |> add(:agent_caps_and_role_uniqueness, check_agent_caps_and_roles(definition.roles, ws))
       |> add(:adapters_registered, check_adapters(definition.adapters))
@@ -183,6 +184,7 @@ defmodule Ezagent.Socialware.Conformance do
       :requires_cycle_free,
       :bases_shape_load,
       :views_exist_caps_registered,
+      :ingress_action_registered,
       :agent_recipes_resolve,
       :agent_caps_and_role_uniqueness,
       :adapters_registered,
@@ -286,6 +288,23 @@ defmodule Ezagent.Socialware.Conformance do
           end
       end
     end)
+  end
+
+  # --- 2b: ingress names a registered, dispatchable Session action ----------
+
+  defp check_ingress(nil), do: :ok
+
+  defp check_ingress(%{behavior: behavior, action: action}) do
+    case CapabilityRegistry.lookup_subject(@session_kind, action) do
+      {:ok, %{behavior: ^behavior, dispatchable?: true}} ->
+        :ok
+
+      {:ok, subject} ->
+        {:error, {:socialware_ingress_not_registered, behavior, action, subject}}
+
+      :error ->
+        {:error, {:socialware_ingress_not_registered, behavior, action}}
+    end
   end
 
   defp unregistered_view_actions(view) do

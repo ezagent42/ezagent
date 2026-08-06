@@ -44,6 +44,15 @@ defmodule Ezagent.Provenance.DerivationEdgesTest do
              DerivationEdges.record_derivation_edge(child, user("other"), :created_by, "other")
   end
 
+  test "parent_for returns the immutable parent for an edge kind" do
+    child = agent("parent-lookup")
+    parent = template("parent-lookup")
+
+    assert :error = DerivationEdges.parent_for(child, :parent_template)
+    assert :ok = DerivationEdges.record_derivation_edge(child, parent, :parent_template, "lookup")
+    assert {:ok, ^parent} = DerivationEdges.parent_for(child, :parent_template)
+  end
+
   test "cycles terminate without a depth cutoff or duplicate descendants" do
     a = agent("cycle-a")
     b = agent("cycle-b")

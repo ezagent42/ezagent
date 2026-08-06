@@ -15,6 +15,7 @@ defmodule Ezagent.World.ErrorCards do
   """
 
   alias Ezagent.Agent.ErrorSignal
+  alias Ezagent.Socialware.SessionReads
 
   @doc "The structured agent-error payload on a reply body; dual-key like `body_text/1`."
   @spec payload(map() | nil) :: map() | nil
@@ -28,11 +29,12 @@ defmodule Ezagent.World.ErrorCards do
   founder's display name. Compute once per render pass; `enrich/3` consumes
   it per row.
   """
-  @spec viewer_ctx(URI.t() | nil, Enumerable.t(), URI.t() | nil) :: map()
-  def viewer_ctx(caller_uri, caller_caps, workspace_uri) do
+  @spec viewer_ctx(URI.t() | nil, Enumerable.t(), URI.t() | nil, map()) :: map()
+  def viewer_ctx(caller_uri, caller_caps, workspace_uri, members \\ %{}) do
     %{
       user_can_fix: viewer_admin?(caller_uri, caller_caps),
-      fix_owner_display_name: founder_display_name(workspace_uri)
+      fix_owner_display_name: founder_display_name(workspace_uri),
+      role_members: unique_role_members(members)
     }
   end
 
@@ -42,10 +44,26 @@ defmodule Ezagent.World.ErrorCards do
     assigns = socket.assigns
 
     fn ->
+      caller_uri = Map.get(assigns, :current_entity_uri)
+      session_uri = Map.get(assigns, :current_session_uri)
+
+      members =
+        case {caller_uri, session_uri} do
+          {%URI{} = caller, %URI{} = session} ->
+            case SessionReads.members(caller, session) do
+              {:ok, authorized_members} -> authorized_members
+              {:error, _reason} -> %{}
+            end
+
+          _ ->
+            %{}
+        end
+
       viewer_ctx(
-        Map.get(assigns, :current_entity_uri),
+        caller_uri,
         Ezagent.World.PresenterCaps.load(assigns),
-        Map.get(assigns, :current_workspace_uri)
+        Map.get(assigns, :current_workspace_uri),
+        members
       )
     end
   end
@@ -91,11 +109,13 @@ defmodule Ezagent.World.ErrorCards do
             end
 
           code = if reason != nil, do: Ezagent.World.ErrorMatcher.match({:error, reason})
+          fix_target_uri = fix_target_uri(code, ctx)
 
           card =
             Ezagent.World.ErrorRenderer.render(code,
               user_can_fix: Map.get(ctx, :user_can_fix, false),
               fix_owner_display_name: Map.get(ctx, :fix_owner_display_name),
+              fix_target_uri: fix_target_uri,
               issue_ref: Map.get(row, "id")
             )
 
@@ -181,6 +201,37 @@ defmodule Ezagent.World.ErrorCards do
   end
 
   defp viewer_admin?(_, _), do: false
+
+  defp fix_target_uri(%{message: message}, ctx) when is_map(message) do
+    with role when is_binary(role) <- Map.get(message, :fix_role),
+         %URI{} = member_uri <- get_in(ctx, [:role_members, role]) do
+      member_uri
+    else
+      _ -> nil
+    end
+  end
+
+  defp fix_target_uri(_code, _ctx), do: nil
+
+  defp unique_role_members(members) when is_map(members) do
+    members
+    |> Enum.reduce(%{}, fn
+      {%URI{} = member_uri, meta}, acc when is_map(meta) ->
+        role = Map.get(meta, :role_name) || Map.get(meta, "role_name")
+
+        case {Ezagent.URI.type?(member_uri, :agent), role} do
+          {true, role} when is_binary(role) and role != "" ->
+            Map.update(acc, role, member_uri, fn _existing -> :ambiguous end)
+
+          _ ->
+            acc
+        end
+
+      {_member_uri, _meta}, acc ->
+        acc
+    end)
+    |> Map.reject(fn {_role, member_uri} -> member_uri == :ambiguous end)
+  end
 
   defp workspace_record(%URI{} = ws_uri) do
     case Ezagent.URI.name(ws_uri) do

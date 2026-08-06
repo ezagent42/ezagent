@@ -44,14 +44,25 @@ export type RoleSlotChoice = {
 
 export type CreateOptions = {
   role_slots?: RoleSlotChoice[]
+  llm_flavor?: string
+  llm_agent_uri?: string
   socialware_config_id?: string
   socialware_content_hash?: string
+}
+
+export type ReusableLlmAgent = {
+  uri: string
+  flavor: string
+  provider_profile?: string | null
 }
 
 export type SessionsState = {
   current_session_uri?: string | null
   sessions?: SessionRow[]
   templates?: string[]
+  template_schemas?: Record<string, Array<{key?: string; options_source?: string; default?: string; hidden?: boolean}>>
+  llm_flavors?: string[]
+  reusable_llm_agents?: ReusableLlmAgent[]
   socialwares?: SocialwareRow[]
   workspace_uri?: string | null
   create_error?: string
@@ -75,15 +86,35 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
   const [shortName, setShortName] = React.useState("")
   const [templateName, setTemplateName] = React.useState(templates[0])
   const [socialwareRef, setSocialwareRef] = React.useState("")
+  const [llmFlavor, setLlmFlavor] = React.useState(state?.llm_flavors?.[0] || "")
+  const [llmAgentUri, setLlmAgentUri] = React.useState("")
   const [roleChoices, setRoleChoices] = React.useState<Record<string, RoleSlotChoice>>({})
   const selectedSession =
     sessions.find((session) => session.uri === currentSessionUri) || sessions[0] || null
   const selectedSocialware = socialwares.find((socialware) => socialware.name === socialwareRef) || null
   const createPending = state?.session_create_pending === true
+  const llmFlavors = state?.llm_flavors || []
+  const reusableLlmAgents = state?.reusable_llm_agents || []
+  const templateSchema = state?.template_schemas?.[templateName] || []
+  const llmFlavorField = templateSchema.find((field) => field.key === "llm_flavor")
+  const llmConfigEnabled = templateSchema.some((field) => field.key === "llm_agent_uri" && field.options_source === "reusable_llm_agents")
+  const fixedLlmFlavor = llmFlavorField?.default || llmFlavor
+  const flavorAgents = reusableLlmAgents.filter((agent) => agent.flavor === fixedLlmFlavor)
 
   React.useEffect(() => {
     if (!templates.includes(templateName)) setTemplateName(templates[0])
   }, [templateName, templates])
+
+  React.useEffect(() => {
+    if (llmFlavorField?.default) setLlmFlavor(llmFlavorField.default)
+    else if (!llmFlavors.includes(llmFlavor)) setLlmFlavor(llmFlavors[0] || "")
+  }, [llmFlavor, llmFlavors, llmFlavorField])
+
+  React.useEffect(() => {
+    if (!flavorAgents.some((agent) => agent.uri === llmAgentUri)) {
+      setLlmAgentUri(flavorAgents[0]?.uri || "")
+    }
+  }, [flavorAgents, llmAgentUri])
 
   React.useEffect(() => {
     if (!createPending && state?.last_dispatch_status === "ok") {
@@ -91,6 +122,8 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
       setTemplateName(templates[0])
       setSocialwareRef("")
       setRoleChoices({})
+      setLlmFlavor(llmFlavors[0] || "")
+      setLlmAgentUri("")
       setCreating(false)
     }
   }, [createPending, state?.last_dispatch_status, templates])
@@ -125,7 +158,11 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
     const template = templateName.trim() || "default"
     const installRef = socialwareRef.trim()
     if (!trimmed || createPending) return
-    const createOptions = selectedSocialware ? createOptionsFor(selectedSocialware, roleChoices) : undefined
+    if (llmConfigEnabled && (!llmFlavor || !llmAgentUri)) return
+    const createOptions = {
+      ...(selectedSocialware ? createOptionsFor(selectedSocialware, roleChoices) : {}),
+      ...(llmConfigEnabled ? {llm_flavor: llmFlavor, llm_agent_uri: llmAgentUri} : {}),
+    }
     onCreate?.(trimmed, template, installRef || undefined, createOptions)
   }
 
@@ -205,6 +242,28 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 ))}
               </Select>
             </label>
+            {llmConfigEnabled && (
+              <div className="grid gap-2 border-t border-border pt-3" data-world-hello-llm-picker>
+                <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-hello-llm-agent">
+                  已认证的 LLM Agent
+                  <Select
+                    id="world-hello-llm-agent"
+                    value={llmAgentUri}
+                    onChange={(event) => setLlmAgentUri(event.target.value)}
+                    disabled={flavorAgents.length === 0}
+                  >
+                    <option value="">
+                      {flavorAgents.length === 0 ? "没有匹配的已认证 Agent" : "请选择 Agent"}
+                    </option>
+                    {flavorAgents.map((agent) => (
+                      <option key={agent.uri} value={agent.uri}>
+                        {agent.uri}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+              </div>
+            )}
             {socialwares.length > 0 && (
               <label className="grid gap-1 text-xs font-medium text-muted-foreground" htmlFor="world-session-socialware">
                 应用
@@ -252,7 +311,11 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                 )}
               </div>
             )}
-            <Button type="submit" size="sm" disabled={createPending || !shortName.trim()}>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createPending || !shortName.trim() || (llmConfigEnabled && (!llmFlavor || !llmAgentUri))}
+            >
               {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {createPending ? "创建中" : "创建"}
             </Button>

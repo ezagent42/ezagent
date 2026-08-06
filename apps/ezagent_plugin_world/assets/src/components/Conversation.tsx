@@ -7,6 +7,7 @@ import {pluginPageRenderers} from "../generated/plugin-page-renderers"
 import {matchUnfurl} from "./unfurl"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {ExternalMirror} from "./Admin"
+import {AgentApiKeys} from "./Identities"
 
 /** G5 structured error card pushed by ErrorRenderer */
 type DispatchErrorCard = {
@@ -42,6 +43,11 @@ type MessageRow = {
   error_card?: DispatchErrorCard | null
   attachments?: Attachment[]
   at?: string | null
+}
+
+type ReusableLlmAgent = {
+  uri: string
+  flavor: string
 }
 
 // A file uploaded to the cap-authed endpoint, held until the next send. `grant`
@@ -129,6 +135,22 @@ type ViewTab = {
   mode: string
 }
 
+type AgentAdmissionConnection = {
+  kind: "pty" | "api_key" | "not_required" | "unsupported"
+  label: string
+  provider?: string | null
+}
+
+type AgentAdmission = {
+  role_name: string
+  flavor?: string | null
+  status: "pending_auth" | "authenticating" | "materializing" | "joined" | "failed"
+  attempt_id?: string | null
+  provisional_agent_uri?: string | null
+  failure_code?: string | null
+  connection: AgentAdmissionConnection
+}
+
 const ROUTING_MAGIC_RECEIVERS: InviteCandidateRow[] = [
   {uri: "$session_users,$mentions", display_name: "成员与被提及实体", kind: "preset"},
   {uri: "$session_users", display_name: "人类成员", kind: "group"},
@@ -167,6 +189,9 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   templates?: string[]
+  template_schemas?: Record<string, Array<{key?: string; options_source?: string; default?: string; hidden?: boolean}>>
+  llm_flavors?: string[]
+  reusable_llm_agents?: ReusableLlmAgent[]
   session_create_pending?: boolean
   members?: MemberRow[]
   invite_candidates?: InviteCandidateRow[]
@@ -174,6 +199,7 @@ export type ConversationState = {
   human_role_slots?: HumanRoleSlotRow[]
   installed_socialwares?: InstalledSocialwareRow[]
   unfilled_agent_role_slots?: { role_name: string; reason: string }[]
+  agent_admissions?: AgentAdmission[]
   degraded_operates_edges?: {
     request_id: string
     source_role: string
@@ -191,7 +217,12 @@ export type ConversationState = {
 type Props = {
   state: ConversationState
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
-  onCreate?: (shortName: string, templateName: string) => void
+  onCreate?: (
+    shortName: string,
+    templateName: string,
+    socialwareRef?: string,
+    options?: {llm_flavor?: string; llm_agent_uri?: string},
+  ) => void
   onForkConfig: (sessionUri: string) => void
   onOpenPty: (sessionUri: string, agent: string) => void
   onRestartOrchestrator: (sessionUri: string) => void
@@ -216,6 +247,8 @@ type Props = {
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
   onPublishTemplate: (sessionUri: string, name: string) => void
+  onAgentAdmissionAction?: (action: string, args: Record<string, string>) => void
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
 }
 
 export function handleBindingsViewSwitch(
@@ -297,6 +330,8 @@ export function Conversation({
   pushEvent,
   onKanbanAction,
   onPublishTemplate,
+  onAgentAdmissionAction,
+  onPutApiKey,
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
@@ -306,16 +341,14 @@ export function Conversation({
   const installedSocialwares = state.installed_socialwares || []
   const unfilledRoleSlots = state.unfilled_agent_role_slots || []
   const degradedOperatesEdges = state.degraded_operates_edges || []
+  const agentAdmissions = (state.agent_admissions || []).filter((admission) => admission.status !== "joined")
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
   const views = sourceViews.length > 0 ? sourceViews : fallbackViews
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
   const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
-  // The server's caller-authorized SessionView registry is the source of truth.
-  // Hello templates may use arbitrary template names (`hello-codex`, etc.), so
-  // inferring product type from a URI segment loses valid rendered pages.
-  const hasHelloPageView = views.some((view) => view.id === "hello_page")
+  const hasExternalView = views.some((view) => view.mode === "external")
   const createPending = state.session_create_pending === true
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
@@ -332,6 +365,8 @@ export function Conversation({
   const [creating, setCreating] = React.useState(false)
   const [newSessionName, setNewSessionName] = React.useState("")
   const [newSessionTemplate, setNewSessionTemplate] = React.useState(templates[0])
+  const [newLlmFlavor, setNewLlmFlavor] = React.useState(state.llm_flavors?.[0] || "")
+  const [newLlmAgentUri, setNewLlmAgentUri] = React.useState("")
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
@@ -365,6 +400,39 @@ export function Conversation({
   const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
   const ptyMembers = members.filter((member) => member.kind === "agent" && member.pty_alive === true)
   const activePtyAgentUri = state.agent_uri || state.active_pty_agent_uri || null
+  const llmFlavors = state.llm_flavors || []
+  const templateSchema = state.template_schemas?.[newSessionTemplate] || []
+  const llmFlavorField = templateSchema.find((field) => field.key === "llm_flavor")
+  const llmConfigEnabled = templateSchema.some((field) => field.key === "llm_agent_uri" && field.options_source === "reusable_llm_agents")
+  const fixedLlmFlavor = llmFlavorField?.default || newLlmFlavor
+  const llmAgents = (state.reusable_llm_agents || []).filter((agent) => agent.flavor === fixedLlmFlavor)
+
+  const beginAdmission = (admission: AgentAdmission) => {
+    if (!sessionUri) return
+    onAgentAdmissionAction?.("session.agent_admission.begin", {
+      session_uri: sessionUri,
+      role_name: admission.role_name,
+    })
+  }
+
+  const cancelAdmission = (admission: AgentAdmission) => {
+    if (!sessionUri || !admission.attempt_id) return
+    onAgentAdmissionAction?.("session.agent_admission.cancel", {
+      session_uri: sessionUri,
+      role_name: admission.role_name,
+      attempt_id: admission.attempt_id,
+    })
+  }
+
+  const reconcileAdmissions = () => {
+    if (!sessionUri) return
+    onAgentAdmissionAction?.("session.agent_admission.reconcile", {session_uri: sessionUri})
+  }
+
+  const continueAdmissionLogin = (admission: AgentAdmission) => {
+    if (!sessionUri || !admission.provisional_agent_uri) return
+    onOpenPty(sessionUri, admission.provisional_agent_uri)
+  }
 
   React.useEffect(() => {
     setMembers(state.members || [])
@@ -379,6 +447,8 @@ export function Conversation({
     setUploadError(null)
     setCreating(false)
     setNewSessionName("")
+    setNewLlmFlavor(state.llm_flavors?.[0] || "")
+    setNewLlmAgentUri("")
     setInviteOpen(false)
     setInviteValue("")
     setMembersOpen(false)
@@ -394,9 +464,22 @@ export function Conversation({
   }, [newSessionTemplate, templates])
 
   React.useEffect(() => {
+    if (llmFlavorField?.default) setNewLlmFlavor(llmFlavorField.default)
+    else if (!llmFlavors.includes(newLlmFlavor)) setNewLlmFlavor(llmFlavors[0] || "")
+  }, [llmFlavors, newLlmFlavor, llmFlavorField])
+
+  React.useEffect(() => {
+    if (!llmAgents.some((agent) => agent.uri === newLlmAgentUri)) {
+      setNewLlmAgentUri(llmAgents[0]?.uri || "")
+    }
+  }, [llmAgents, newLlmAgentUri])
+
+  React.useEffect(() => {
     if (!createPending && state.last_dispatch_status === "ok") {
       setNewSessionName("")
       setNewSessionTemplate(templates[0])
+      setNewLlmFlavor(llmFlavors[0] || "")
+      setNewLlmAgentUri("")
       setCreating(false)
     }
   }, [createPending, state.last_dispatch_status, templates])
@@ -590,7 +673,13 @@ export function Conversation({
     const trimmed = newSessionName.trim()
     const template = newSessionTemplate.trim() || "default"
     if (!trimmed || createPending) return
-    onCreate?.(trimmed, template)
+    if (llmConfigEnabled && (!newLlmFlavor || !newLlmAgentUri)) return
+    onCreate?.(
+      trimmed,
+      template,
+      undefined,
+      llmConfigEnabled ? {llm_flavor: newLlmFlavor, llm_agent_uri: newLlmAgentUri} : undefined,
+    )
   }
 
   const doPublish = () => {
@@ -736,7 +825,31 @@ export function Conversation({
                 ))}
               </Select>
             </label>
-            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim()}>
+            {llmConfigEnabled && (
+              <div className="grid gap-2 border-t border-border pt-2.5" data-world-hello-llm-picker>
+                <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-llm-agent">
+                  已认证的 LLM Agent
+                  <Select
+                    id="world-conversation-llm-agent"
+                    value={newLlmAgentUri}
+                    onChange={(event) => setNewLlmAgentUri(event.target.value)}
+                    disabled={llmAgents.length === 0}
+                  >
+                    <option value="">
+                      {llmAgents.length === 0 ? "没有匹配的已认证 Agent" : "请选择 Agent"}
+                    </option>
+                    {llmAgents.map((agent) => (
+                      <option key={agent.uri} value={agent.uri}>{agent.uri}</option>
+                    ))}
+                  </Select>
+                </label>
+              </div>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createPending || !newSessionName.trim() || (llmConfigEnabled && (!newLlmFlavor || !newLlmAgentUri))}
+            >
               {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {createPending ? "创建中" : "创建"}
             </Button>
@@ -782,7 +895,7 @@ export function Conversation({
         </div>
       </aside>
 
-      <section className="flex min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-card text-card-foreground">
         <div
           data-world-session-header
           className="flex min-h-[58px] flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-nowrap sm:items-center"
@@ -886,7 +999,7 @@ export function Conversation({
                 </div>
               )}
             </div>
-            {hasHelloPageView && sessionUri && (
+            {hasExternalView && sessionUri && (
               <Button type="button" size="sm" onClick={() => setPublishOpen(true)} aria-label="发布为模板" data-world-publish-template-button>
                 <Upload aria-hidden="true" />
                 发布
@@ -923,9 +1036,9 @@ export function Conversation({
                 onAction: onKanbanAction,
               })}
             </div>
-          ) : activeId === "hello_page" && hasHelloPageView ? (
-            <div className="min-w-0 flex-1 overflow-hidden bg-white" data-world-subcomponent="hello-page">
-              <HelloPagePreview sessionUri={sessionUri} />
+          ) : activeMode === "external" ? (
+            <div className="h-full min-h-0 min-w-0 w-full flex-1 overflow-hidden bg-white" data-world-subcomponent="external-view">
+              <ExternalSessionViewPreview sessionUri={sessionUri} />
             </div>
           ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
@@ -952,6 +1065,77 @@ export function Conversation({
                   </Button>
                 </div>
               )}
+
+              {agentAdmissions.map((admission) => (
+                <section
+                  key={admission.role_name}
+                  className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
+                  data-world-agent-admission={admission.role_name}
+                  aria-label={`${admission.role_name} 连接状态`}
+                >
+                  <p className="font-semibold text-foreground">{admission.connection.label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{admission.role_name}</p>
+                  {admission.status === "failed" && (
+                    <p className="mt-1 text-muted-foreground">连接未完成，请重试。</p>
+                  )}
+                  {admission.status === "authenticating" || admission.status === "materializing" ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {admission.connection.kind !== "api_key" && (
+                        <span className="text-muted-foreground">正在连接…</span>
+                      )}
+                      {admission.connection.kind === "api_key" && (
+                        <AgentApiKeys
+                          state={{
+                            component: "agent_api_keys",
+                            agent_uri: admission.provisional_agent_uri,
+                            api_keys: [],
+                            can_edit: true,
+                          }}
+                          onPutApiKey={onPutApiKey}
+                          defaultProvider={admission.connection.provider || undefined}
+                        />
+                      )}
+                      {admission.connection.kind === "pty" && admission.provisional_agent_uri && (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => continueAdmissionLogin(admission)}
+                            data-world-agent-admission-continue
+                          >
+                            继续登录
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={reconcileAdmissions}
+                            data-world-agent-admission-check
+                          >
+                            检查连接状态
+                          </Button>
+                        </>
+                      )}
+                      {admission.attempt_id && (
+                        <Button type="button" size="sm" variant="secondary" onClick={() => cancelAdmission(admission)}>
+                          取消
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => beginAdmission(admission)}
+                      data-world-agent-admission-connect={admission.status === "pending_auth" ? true : undefined}
+                      data-world-agent-admission-retry={admission.status === "failed" ? true : undefined}
+                    >
+                      {admission.status === "failed" ? `重试 ${admission.connection.label}` : admission.connection.label}
+                    </Button>
+                  )}
+                </section>
+              ))}
 
               {messages.length === 0 ? (
                 <p className="m-auto max-w-[38ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">
@@ -1135,11 +1319,6 @@ export function Conversation({
               </div>
             </form>
             </div>
-            {hasHelloPageView && (
-              <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} />
-              </div>
-            )}
             </>
           )}
           </div>
@@ -1798,18 +1977,14 @@ function kindLabel(kind: string, mine: boolean) {
   return "成员"
 }
 
-// TEMPORARY internal preview of a hello session's rendered page. Embeds the
-// public `/socialware/external` surface (the working renderer) in an iframe,
-// rather than the native @json-render island. The proper home for this is world
-// surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
-// until then this is a clearly-labelled stopgap so an internal reader can see the page
-// without leaving the console. Hello sessions are `public_view`, so the customer
-// URL renders with no token/login.
-function HelloPagePreview({sessionUri}: {sessionUri: string}) {
+// Generic iframe host for a registry-declared external SessionView. The server
+// decides whether a view has mode `external`; this client never infers product
+// behavior from a view id or session URI.
+function ExternalSessionViewPreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
       {/* operator-only overlay control — never rendered on the public share page */}
       <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
         <a
@@ -1824,7 +1999,7 @@ function HelloPagePreview({sessionUri}: {sessionUri: string}) {
         </a>
       </div>
 
-      <iframe title="渲染页面预览" src={src} className="min-h-0 flex-1 border-0 bg-white" />
+      <iframe title="渲染页面预览" src={src} className="h-full min-h-0 w-full flex-1 border-0 bg-white" />
     </div>
   )
 }

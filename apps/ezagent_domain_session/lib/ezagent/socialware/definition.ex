@@ -25,6 +25,7 @@ defmodule Ezagent.Socialware.Definition do
             legends: %{},
             orchestrator_template_uri: nil,
             adapters: [],
+            ingress: nil,
             visibility_policy: %{publish_policy: :auto, web_anon_access: false, scope: :private},
             owner_policy: %{type: :installer}
 
@@ -35,12 +36,15 @@ defmodule Ezagent.Socialware.Definition do
   shape-only here; the plugin catalog validates the NAME at materialization).
   """
   @type operate_edge :: %{role: String.t(), behavior: module(), action: atom()}
+  @type credential_admission :: :immediate | :before_session_join
+  @type ingress :: %{behavior: module(), action: atom(), protected_roles: [String.t()]}
   @type role_slot ::
           %{
             required(:role_name) => String.t(),
             required(:fill) => :agent,
             required(:recipe) => String.t(),
             required(:flavor) => String.t(),
+            required(:credential_admission) => credential_admission(),
             optional(:config) => map(),
             optional(:provider) => String.t(),
             optional(:operates) => [operate_edge()]
@@ -64,6 +68,7 @@ defmodule Ezagent.Socialware.Definition do
           legends: map(),
           orchestrator_template_uri: URI.t() | nil,
           adapters: [map()],
+          ingress: ingress() | nil,
           visibility_policy: map(),
           owner_policy: owner_policy()
         }
@@ -91,6 +96,7 @@ defmodule Ezagent.Socialware.Definition do
          {:ok, shape} <- behavior_list(attrs, :shape),
          {:ok, views} <- behavior_list(attrs, :views),
          {:ok, roles} <- roles_list(attrs),
+         {:ok, ingress} <- ingress(attrs, roles),
          :ok <- validate_operates_roles(roles),
          {:ok, visibility_policy} <- visibility_policy(attrs),
          {:ok, owner_policy} <- owner_policy(attrs),
@@ -114,6 +120,7 @@ defmodule Ezagent.Socialware.Definition do
          legends: map(attrs, :legends),
          orchestrator_template_uri: optional_uri(attrs, :orchestrator_template_uri),
          adapters: list(attrs, :adapters),
+         ingress: ingress,
          visibility_policy: visibility_policy,
          owner_policy: owner_policy
        }}
@@ -167,6 +174,7 @@ defmodule Ezagent.Socialware.Definition do
       legends: json_safe(definition.legends),
       orchestrator_template_uri: uri_string(definition.orchestrator_template_uri),
       adapters: json_safe(definition.adapters),
+      ingress: json_safe(definition.ingress),
       visibility_policy: stringify_visibility(definition.visibility_policy),
       owner_policy: stringify_owner_policy(definition.owner_policy)
     }
@@ -308,8 +316,15 @@ defmodule Ezagent.Socialware.Definition do
         with true <-
                non_empty_string?(recipe) and non_empty_string?(role_name) and
                  non_empty_string?(flavor),
+             {:ok, credential_admission} <- credential_admission(item),
              {:ok, operates} <- operates_list(item, role_name) do
-          slot = %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}
+          slot = %{
+            role_name: role_name,
+            fill: :agent,
+            recipe: recipe,
+            flavor: flavor,
+            credential_admission: credential_admission
+          }
 
           {:ok,
            slot
@@ -336,6 +351,16 @@ defmodule Ezagent.Socialware.Definition do
   end
 
   defp role_slot(other), do: {:error, {:invalid_socialware_role_slot, other}}
+
+  defp credential_admission(item) do
+    case get(item, :credential_admission, :immediate) do
+      :immediate -> {:ok, :immediate}
+      "immediate" -> {:ok, :immediate}
+      :before_session_join -> {:ok, :before_session_join}
+      "before_session_join" -> {:ok, :before_session_join}
+      other -> {:error, {:invalid_socialware_definition_field, :credential_admission, other}}
+    end
+  end
 
   defp operates_list(item, source_role) do
     case get(item, :operates, []) do
@@ -391,6 +416,67 @@ defmodule Ezagent.Socialware.Definition do
 
   defp operate_action(behavior, action),
     do: {:error, {:invalid_socialware_operates_action, behavior, action}}
+
+  defp ingress(attrs, roles) do
+    case get(attrs, :ingress) do
+      nil ->
+        {:ok, nil}
+
+      ingress when is_map(ingress) ->
+        ingress_spec(ingress, roles)
+
+      other ->
+        {:error, {:invalid_socialware_definition_field, :ingress, other}}
+    end
+  end
+
+  defp ingress_spec(spec, roles) do
+    behavior = get(spec, :behavior)
+    action = get(spec, :action)
+
+    with {:ok, behavior} <- behavior_module(behavior),
+         {:ok, action} <- ingress_action(behavior, action),
+         {:ok, protected_roles} <- ingress_protected_roles(spec, roles) do
+      {:ok, %{behavior: behavior, action: action, protected_roles: protected_roles}}
+    end
+  end
+
+  defp ingress_action(behavior, action) when is_atom(action) do
+    if action in Ezagent.ActionSet.action_names(behavior) do
+      {:ok, action}
+    else
+      {:error, {:invalid_socialware_ingress_action, behavior, action}}
+    end
+  end
+
+  defp ingress_action(behavior, action) when is_binary(action) do
+    case Enum.find(Ezagent.ActionSet.action_names(behavior), &(Atom.to_string(&1) == action)) do
+      nil -> {:error, {:invalid_socialware_ingress_action, behavior, action}}
+      declared -> {:ok, declared}
+    end
+  end
+
+  defp ingress_action(behavior, action),
+    do: {:error, {:invalid_socialware_ingress_action, behavior, action}}
+
+  defp ingress_protected_roles(spec, roles) do
+    case get(spec, :protected_roles, []) do
+      protected_roles when is_list(protected_roles) ->
+        if Enum.all?(protected_roles, &non_empty_string?/1) do
+          declared = MapSet.new(roles, & &1.role_name)
+
+          case Enum.find(protected_roles, &(not MapSet.member?(declared, &1))) do
+            nil -> {:ok, protected_roles}
+            role -> {:error, {:invalid_socialware_ingress_protected_role, role}}
+          end
+        else
+          {:error, {:invalid_socialware_definition_field, :protected_roles, protected_roles}}
+        end
+
+      other ->
+        {:error, {:invalid_socialware_definition_field, :protected_roles, other}}
+    end
+  end
 
   defp maybe_put_operates(slot, []), do: slot
   defp maybe_put_operates(slot, operates), do: Map.put(slot, :operates, operates)

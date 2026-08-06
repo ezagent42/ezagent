@@ -5,7 +5,7 @@ defmodule EzagentPluginCurlAgent.BridgeAdapterTest do
 
   These tests pin the adapter contract surface (`flavor/0`,
   `transport_class/0`) and its deadlock-safe request assembly. The HTTP
-  boundary itself (`ApiClient` + `:httpc`) is NOT re-tested here (the
+  boundary itself (`ApiClient` + `Req`) is NOT re-tested here (the
   ApiClient moduledoc + scenario 07 cover the wire shape); the adapter
   tests exercise the assembly + error-relay path that does NOT touch the
   network (missing api_key, missing agent_uri).

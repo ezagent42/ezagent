@@ -30,6 +30,7 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
   use Gettext, backend: EzagentDomainUi.Gettext
 
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentDomainUi.Pty.Terminal
 
   @impl true
@@ -52,9 +53,8 @@ defmodule EzagentDomainUi.Pty.TerminalView do
     # (post-lifecycle remediation.)
     case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{members: members}} when is_map(members) ->
-        members
-        |> Map.keys()
-        |> Enum.any?(&pty_backed_member?/1)
+        Enum.any?(Map.keys(members), &pty_backed_member?/1) or
+          active_admission_pty?(session_uri)
 
       _ ->
         false
@@ -68,6 +68,25 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   # echo-with-pty, curl-with-pty, future flavors all qualify.
   defp pty_backed_member?(%URI{} = uri), do: Ezagent.Domain.Pty.alive?(uri)
   defp pty_backed_member?(_), do: false
+
+  defp active_admission_pty?(session_uri) do
+    session_uri
+    |> AgentAdmission.list()
+    |> Enum.any?(&active_admission_pty_row?/1)
+  end
+
+  defp active_admission_pty_row?(%{
+         status: status,
+         provisional_agent_uri: candidate
+       })
+       when status in [:authenticating, :materializing] and is_binary(candidate) do
+    case Ezagent.URI.parse(candidate) do
+      {:ok, %URI{scheme: "entity"} = uri} -> Ezagent.Domain.Pty.alive?(uri)
+      _ -> false
+    end
+  end
+
+  defp active_admission_pty_row?(_), do: false
 
   @impl true
   def render(assigns) do

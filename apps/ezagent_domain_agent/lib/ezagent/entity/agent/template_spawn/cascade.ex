@@ -25,9 +25,11 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
         opts
       )
       when is_map(content) do
+    content = enforce_session_local_policy(content)
+
     cond do
       is_map(content_field(content, :cascade)) ->
-        {:ok, content}
+        {:ok, clear_grantless_bootstrap(content)}
 
       is_map(content_field(content, :cascade_resolution)) ->
         with {:ok, cascade, resolved} <-
@@ -49,6 +51,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
             content
             |> Map.put(:cascade, put_pending_grant(cascade, pending_grant))
             |> put_selected_credential_source(resolved.secret_source, pending_grant)
+            |> maybe_mark_grantless_bootstrap(template_class, resolved)
 
           {:ok, content}
         end
@@ -95,6 +98,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
           workspace_uri: workspace_uri,
           workspace_layer_uri: source_template_uri,
           flavor: flavor,
+          credential_source_policy: content_field(content, :credential_source_policy),
           credential_required?: credential_required?(credential_adapter, content),
           explicit_source: Keyword.get(opts, :explicit_source)
         }
@@ -111,7 +115,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                opts,
                resolution
              ) do
-        {:ok, content}
+        {:ok, maybe_mark_grantless_bootstrap(content, template_class, resolved)}
       end
     else
       {:ok, content}
@@ -120,13 +124,20 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
   defp put_default_cascade_if_source_present(
          content,
-         _cascade,
+         cascade,
          %{secret_source: nil},
          _agent,
          _opts,
-         _resolution
+         resolution
        ) do
-    {:ok, content}
+    if session_local_policy?(resolution) do
+      {:ok,
+       content
+       |> Map.put(:cascade_resolution, resolution)
+       |> Map.put(:cascade, cascade)}
+    else
+      {:ok, content}
+    end
   end
 
   defp put_default_cascade_if_source_present(
@@ -162,6 +173,59 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
   defp credential_required_by_default?(:slice), do: true
   defp credential_required_by_default?(:file), do: false
+
+  defp maybe_mark_grantless_bootstrap(content, template_class, resolved) do
+    content = clear_grantless_bootstrap(content)
+    cascade = content_field(content, :cascade)
+
+    eligible? =
+      is_map(cascade) and
+        content_field(content, :credential_bootstrap) in [:pty, "pty"] and
+        content_field(content, :credential_optional) in [true, "true"] and
+        session_local_policy?(content) and
+        resolved.secret_source == nil and
+        not Map.has_key?(cascade, :pending_grant) and
+        not Map.has_key?(cascade, "pending_grant") and
+        pty_connection?(template_class, content)
+
+    if eligible? do
+      put_cascade_field(content, Map.put(cascade, :grantless_bootstrap, :pty))
+    else
+      content
+    end
+  end
+
+  defp clear_grantless_bootstrap(content) do
+    case content_field(content, :cascade) do
+      cascade when is_map(cascade) ->
+        put_cascade_field(
+          content,
+          Map.drop(cascade, [:grantless_bootstrap, "grantless_bootstrap"])
+        )
+
+      _ ->
+        content
+    end
+  end
+
+  defp put_cascade_field(content, cascade) do
+    content
+    |> Map.drop([:cascade, "cascade"])
+    |> Map.put(:cascade, cascade)
+  end
+
+  defp pty_connection?(template_class, content) do
+    Code.ensure_loaded(template_class)
+
+    if function_exported?(template_class, :credential_connection, 1) do
+      case template_class.credential_connection(role: content) do
+        {:pty, label} when is_binary(label) and label != "" -> true
+        _ -> false
+      end
+    else
+      false
+    end
+  end
 
   # A member may opt OUT of the required-by-default credential (e.g. a curl LLM
   # member declared credential_optional so it keyless-spawns in deployments with
@@ -473,6 +537,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       session_uri: session_uri,
       explicit_source: explicit_source,
       flavor: Map.get(resolution, :flavor) || Map.get(resolution, "flavor") || flavor,
+      credential_source_policy:
+        Map.get(resolution, :credential_source_policy) ||
+          Map.get(resolution, "credential_source_policy"),
       credential_required?: Map.get(resolution, :credential_required?, true)
     }
     |> maybe_put_uri_input(resolution, :workspace_layer_uri)
@@ -548,6 +615,42 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
     end
   end
 
+  defp enforce_session_local_policy(content) do
+    if session_local_policy?(content) do
+      content = Map.drop(content, [:cascade, "cascade"])
+
+      case content_field(content, :cascade_resolution) do
+        resolution when is_map(resolution) ->
+          sanitized =
+            resolution
+            |> Map.drop([
+              :explicit_source,
+              "explicit_source",
+              :credential_source_uri,
+              "credential_source_uri",
+              :pending_grant,
+              "pending_grant",
+              :credential_source_policy,
+              "credential_source_policy"
+            ])
+            |> Map.put(:credential_source_policy, :session_local)
+
+          content
+          |> Map.drop([:cascade_resolution, "cascade_resolution"])
+          |> Map.put(:cascade_resolution, sanitized)
+
+        _ ->
+          content
+      end
+    else
+      content
+    end
+  end
+
+  defp session_local_policy?(map) when is_map(map) do
+    content_field(map, :credential_source_policy) in [:session_local, "session_local"]
+  end
+
   @doc false
   def sanitize_respawn_template_data(respawn_data, template_content)
       when is_map(respawn_data) and is_map(template_content) do
@@ -581,15 +684,31 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       :session_uri,
       :explicit_source,
       :credential_source_uri,
+      :credential_source_policy,
+      :credential_required?,
       :workspace_layer_uri,
       :user_layer_uri,
       :session_layer_uri
     ]
     |> Enum.reduce(%{}, fn key, acc ->
-      case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
-        %URI{} = uri -> Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
-        value when is_binary(value) and value != "" -> Map.put(acc, Atom.to_string(key), value)
-        _ -> acc
+      case Map.get(resolution, key, Map.get(resolution, Atom.to_string(key))) do
+        %URI{} = uri ->
+          Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
+
+        value when key == :credential_required? and is_boolean(value) ->
+          Map.put(acc, Atom.to_string(key), value)
+
+        _value when key == :credential_required? ->
+          acc
+
+        value when is_binary(value) and value != "" ->
+          Map.put(acc, Atom.to_string(key), value)
+
+        value when key == :credential_source_policy and value == :session_local ->
+          Map.put(acc, Atom.to_string(key), Atom.to_string(value))
+
+        _ ->
+          acc
       end
     end)
   end

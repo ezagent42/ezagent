@@ -48,23 +48,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
-  alias Ezagent.Agent.CredentialPrecondition
-  alias Ezagent.Agent.RecipeMaterializer
-  alias Ezagent.Agent.RecipeRegistry
+  import EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentSupport,
+    except: [planned_agent_uri: 1]
+
   alias Ezagent.ActionSet.Session.Members
-  alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
   alias Ezagent.Identity.RecipeCapBinding
-  alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.Participants
-  alias Ezagent.Session.Participants, as: SessionParticipants
-  alias EzagentDomainInstanceMessage.SessionCreator
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
-  alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
   @telemetry_prefix [:ezagent, :socialware, :definition_agents]
-  @agent_description "socialware-declared agent materialized per-session (Definition.roles)"
-  @role_member_attempts 100
-  @role_member_poll_ms 10
 
   @doc """
   Materialize agent role slots into `session_uri`. `granted_by` is the session owner
@@ -73,23 +67,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   Returns `{:ok, summary}` where `summary` is
   `%{satisfied: [role_name], skipped: [%{role_name:, reason:}]}`.
 
-  ## Skip vs fail (chain C, Allen 2026-07-10 / #1326)
-
-  A FILE-credential role slot (cc: OAuth `.credentials.json`) whose installer has
-  no resolvable credential source is SKIPPED, not fatal: it is logged, emitted as
-  telemetry, recorded on the session (`unfilled_agent_role_slots`), and the rest
-  of the batch continues. Creating it anyway produces an agent that boots "Not
-  logged in", never joins its transport bridge, and hangs at `:not_ready` forever
-  — a silent zombie member (see `check_credential_source/3` +
-  `Ezagent.Agent.CredentialPrecondition`). env-/slice-credential flavors
-  keyless-spawn by design (credentialless template membership — the credential
-  may still arrive through the cascade at cold spawn), so they are NOT gated here.
+  A role whose registered flavor declares a credential connection is deferred
+  into durable admission. Session materialization never resolves a prior user or
+  workspace credential source for it; the owner must authenticate the fresh
+  provisional agent before it can join. Credential-free roles still materialize
+  immediately.
 
   Every OTHER failure still halts the batch (`{:error, reason, partial}`): a
   duplicate role name, an unknown recipe, a failed spawn/bind/join. Those are
   bugs, not environment, and must not be swallowed as "skipped".
   """
   @type summary :: %{
+          optional(:deferred) => [String.t()],
           satisfied: [String.t()],
           skipped: [%{role_name: String.t(), reason: term()}]
         }
@@ -126,13 +115,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   def materialize_definition_agents(_session, _ws, _granted_by, _agents, _opts),
-    do: {:ok, %{satisfied: [], skipped: []}}
+    do: {:ok, %{satisfied: [], skipped: [], deferred: []}}
 
   defp do_materialize_definition_agents(session_uri, workspace_uri, granted_by, agents, opts) do
     result =
-      Enum.reduce_while(agents, {:ok, MapSet.new(), [], [], %{}}, fn agent,
-                                                                     {:ok, batch_seen, installed,
-                                                                      skipped, role_members} ->
+      Enum.reduce_while(agents, {:ok, MapSet.new(), [], [], [], %{}}, fn agent,
+                                                                         {:ok, batch_seen,
+                                                                          installed, skipped,
+                                                                          deferred, role_members} ->
         role_name = role_name_of(agent)
 
         cond do
@@ -148,8 +138,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
             case materialize_one(session_uri, workspace_uri, granted_by, agent) do
               {:ok, %URI{} = agent_uri} ->
                 {:cont,
-                 {:ok, seen, [role_name | installed], skipped,
+                 {:ok, seen, [role_name | installed], skipped, deferred,
                   Map.put(role_members, role_name, agent_uri)}}
+
+              {:deferred, _admission} ->
+                {:cont, {:ok, seen, installed, skipped, [role_name | deferred], role_members}}
 
               # Chain C — a credential-less FILE-flavor role is skipped, not
               # fatal: the batch continues and the durable, user-facing record is
@@ -158,8 +151,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                 report_skip(session_uri, role_name, reason)
 
                 {:cont,
-                 {:ok, seen, installed,
-                  [%{role_name: role_name, reason: reason} | skipped], role_members}}
+                 {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped],
+                  deferred, role_members}}
 
               {:error, reason} ->
                 partial = %{
@@ -176,8 +169,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       end)
 
     case result do
-      {:ok, _seen, satisfied, skipped, role_members} ->
-        summary = %{satisfied: Enum.reverse(satisfied), skipped: Enum.reverse(skipped)}
+      {:ok, _seen, satisfied, skipped, deferred, role_members} ->
+        summary = %{
+          satisfied: Enum.reverse(satisfied),
+          skipped: Enum.reverse(skipped),
+          deferred: Enum.reverse(deferred)
+        }
 
         case Ezagent.Socialware.CompositionCaps.reconcile_session(
                session_uri,
@@ -226,9 +223,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         # joined. Refresh its durable recipe binding without re-spawning, then
         # re-run post materialization hooks because both are idempotent and may
         # be absent on legacy sessions.
-        with :ok <- refresh_existing_binding(workspace_uri, existing_uri, recipe_name, role_name),
+        with :ok <-
+               DefinitionAgentLifecycle.refresh_existing_binding(
+                 workspace_uri,
+                 existing_uri,
+                 recipe_name,
+                 role_name
+               ),
+             :ok <- maybe_clear_admission(session_uri, agent),
              :ok <-
-               maybe_after_materialize(
+               DefinitionAgentLifecycle.after_materialize(
                  session_uri,
                  workspace_uri,
                  granted_by,
@@ -240,33 +244,41 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
       nil ->
         result =
-          case install_mode_of(agent) do
-            :reuse ->
-              reuse_existing_agent(
-                session_uri,
-                workspace_uri,
-                granted_by,
-                agent,
-                recipe_name,
-                role_name
-              )
+          with {:ok, _recipe} <- lookup_recipe(workspace_uri, recipe_name) do
+            case install_mode_of(agent) do
+              :reuse ->
+                reuse_existing_agent(
+                  session_uri,
+                  workspace_uri,
+                  granted_by,
+                  agent,
+                  recipe_name,
+                  role_name
+                )
 
-            :fresh ->
-              materialize_fresh_agent(
-                session_uri,
-                workspace_uri,
-                granted_by,
-                agent,
-                recipe_name,
-                role_name
-              )
+              :fresh ->
+                case credential_admission_of(agent) do
+                  :before_session_join ->
+                    materialize_gated_agent(session_uri, agent)
+
+                  :immediate ->
+                    materialize_fresh_agent(
+                      session_uri,
+                      workspace_uri,
+                      granted_by,
+                      agent,
+                      recipe_name,
+                      role_name
+                    )
+                end
+            end
           end
 
         case result do
           {:ok, agent_uri} ->
             # The orchestrator-recipe hook: grants scoped delegation caps +
             # registers MCP context. Non-orchestrator roles are a no-op.
-            case maybe_after_materialize(
+            case DefinitionAgentLifecycle.after_materialize(
                    session_uri,
                    workspace_uri,
                    granted_by,
@@ -281,6 +293,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           # so no post-materialize hooks run; propagate the skip to the batch loop.
           {:skip, _reason} = skip ->
             skip
+
+          {:deferred, _admission} = deferred ->
+            deferred
 
           {:error, _reason} = error ->
             error
@@ -299,11 +314,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     flavor = flavor_of(agent)
     provider = provider_of(agent)
 
-    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-         recipe = merge_role_config(recipe, role_config(agent)),
-         {:ok, planned_uri} <-
-           planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
-      materialize_at_planned_uri(
+    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name) do
+      recipe = merge_role_config(recipe, role_config(agent))
+
+      materialize_planned_agent(
         session_uri,
         workspace_uri,
         granted_by,
@@ -312,21 +326,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         recipe_name,
         role_name,
         flavor,
-        provider,
-        planned_uri
+        provider
       )
     end
   end
 
-  # A DETERMINISTIC-URI role (a passive data role's `sw-data-<digest>` URI is a
-  # pure function of session + role_name) whose agent is ALREADY LIVE from a
-  # prior materialize is an idempotent re-materialize/repair. Re-running the full
-  # spawn would fail: `spawn_from_template_content` correctly rejects a spawn onto
-  # an already-live URI as `:agent_uri_already_live` (the reject-double-spawn
-  # contract). Mirror the existing-member idempotent branch — refresh the durable
-  # recipe binding without re-spawning. A fresh (non-passive) role's URI is a
-  # random UUID, so it is never live here and always takes the spawn path.
-  defp materialize_at_planned_uri(
+  defp materialize_gated_agent(session_uri, agent) do
+    with {:ok, current_admission} <- AgentAdmission.current(session_uri, agent) do
+      case current_admission do
+        %{status: status} = admission when status in [:authenticating, :materializing] ->
+          {:deferred, admission}
+
+        %{status: :pending_auth, failure_code: :authentication_failed} = admission ->
+          {:deferred, admission}
+
+        _other ->
+          with {:ok, admission} <- AgentAdmission.defer(session_uri, agent) do
+            {:deferred, admission}
+          end
+      end
+    end
+  end
+
+  defp materialize_planned_agent(
          session_uri,
          workspace_uri,
          granted_by,
@@ -335,16 +357,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          recipe_name,
          role_name,
          flavor,
-         provider,
-         %URI{} = planned_uri
+         provider
        ) do
-    if Ezagent.Kind.alive?(planned_uri) do
-      with :ok <-
-             refresh_existing_binding(workspace_uri, planned_uri, recipe_name, role_name) do
-        {:ok, planned_uri}
-      end
-    else
-      spawn_fresh_at_planned_uri(
+    with {:ok, planned_uri} <-
+           planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
+      DefinitionAgentLifecycle.materialize_at_planned_uri(
         session_uri,
         workspace_uri,
         granted_by,
@@ -359,138 +376,63 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp spawn_fresh_at_planned_uri(
-         session_uri,
-         workspace_uri,
-         granted_by,
-         _agent,
-         recipe,
-         recipe_name,
-         role_name,
-         flavor,
-         provider,
-         planned_uri
-       ) do
-    # #1201 A② + chain C (#1326) — BEFORE the spawn (whose #17 cascade resolves
-    # the installer's credential source), auto-adopt the HOST operator's login as
-    # that source (no-op for non-operators / credential-less flavors / login-less
-    # nodes), then gate FILE-credential roles on a resolvable source. Without a
-    # source a cc role can only boot "Not logged in": skip the slot rather than
-    # join a silent zombie member. Neither step copies credentials — the unchanged
-    # cascade inside `spawn_bound_agent` does that when a source resolves.
-    with :ok <-
-           Ezagent.Agent.HostLoginAdopt.ensure_installer_source(
-             granted_by,
-             workspace_uri,
-             flavor
-           ),
-         :ok <- check_credential_source(granted_by, workspace_uri, flavor),
-         :ok <-
-           spawn_bound_agent(
-             session_uri,
-             granted_by,
-             planned_uri,
-             recipe,
-             recipe_name,
-             role_name,
-             flavor,
-             provider
-           ) do
-      {:ok, planned_uri}
-    end
-  end
+  @doc false
+  @spec spawn_provisional(URI.t(), URI.t(), URI.t(), map()) ::
+          {:ok, URI.t(), String.t()} | {:error, term()}
+  def spawn_provisional(session_uri, workspace_uri, granted_by, declaration),
+    do:
+      DefinitionAgentLifecycle.spawn_provisional(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        declaration
+      )
 
-  # Chain C gate, scoped to FILE-credential flavors ONLY (cc: OAuth
-  # `.credentials.json`). Such a role with no resolvable source is skipped rather
-  # than spawned into a "Not logged in" zombie. env-/slice-credential flavors are
-  # deliberately NOT gated here — they keyless-spawn by design (credentialless
-  # template membership; the credential may still arrive through the cascade at
-  # cold spawn). `CredentialPrecondition.check_source/4` stays the standalone
-  # predicate the other lanes call directly; gating on `credential_bearing?/1`
-  # here selects exactly its file branch.
-  defp check_credential_source(installer, workspace_uri, flavor) do
-    if CredentialPrecondition.credential_bearing?(flavor) do
-      CredentialPrecondition.check_source(installer, workspace_uri, flavor)
-    else
-      :ok
-    end
-  end
+  @doc false
+  @spec complete_provisional(URI.t(), URI.t(), map(), URI.t(), String.t(), map()) ::
+          :ok | {:error, term()}
+  def complete_provisional(session_uri, granted_by, declaration, agent_uri, attempt_id, ctx),
+    do:
+      DefinitionAgentLifecycle.complete_provisional(
+        session_uri,
+        granted_by,
+        declaration,
+        agent_uri,
+        attempt_id,
+        ctx
+      )
 
-  defp map_field(map, key) when is_atom(key) do
-    case Map.fetch(map, key) do
-      {:ok, value} -> value
-      :error -> Map.get(map, Atom.to_string(key))
-    end
-  end
-
-  defp spawn_bound_agent(
-         session_uri,
-         granted_by,
-         planned_uri,
-         recipe,
-         recipe_name,
-         role_name,
-         flavor,
-         provider
-       ) do
-    workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
-
-    with {:ok, fresh_receipt} <-
-           spawn_agent(
-             workspace_uri,
-             granted_by,
-             planned_uri,
-             recipe,
-             recipe_name,
-             role_name,
-             flavor,
-             provider
-           ) do
-      case bind_recipe_caps(planned_uri, recipe_name, recipe) do
-        {:ok, binding} ->
-          result =
-            with :ok <- RecipeCapBinding.sync_live(planned_uri),
-                 # Session admission checks whether the caller manages the
-                 # credential-bearing agent. This must exist before `join`;
-                 # granting it afterwards turns a valid fresh role into a
-                 # pending admission and aborts the whole template roster.
-                 :ok <-
-                   Ezagent.Workspace.grant_creator_manage_cap(
-                     :agent,
-                     planned_uri,
-                     workspace_uri,
-                     granted_by
-                   ),
-                 :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe),
-                 :ok <- maybe_await_role_member(session_uri, planned_uri, role_name, recipe) do
-              :ok
-            end
-
-          case result do
-            :ok ->
-              :ok
-
-            {:error, _reason} = error ->
-              rollback_failed_fresh(
-                error,
-                session_uri,
-                planned_uri,
-                fresh_receipt,
-                binding.version
-              )
-          end
-
-        {:error, _reason} = error ->
-          rollback_failed_fresh(error, session_uri, planned_uri, fresh_receipt, nil)
-      end
-    end
-  end
+  @doc false
+  @spec cleanup_provisional(URI.t(), URI.t(), URI.t(), String.t(), map(), term()) ::
+          :ok | {:error, term()}
+  def cleanup_provisional(session_uri, provenance_root, agent_uri, attempt_id, ctx, reason),
+    do:
+      DefinitionAgentLifecycle.cleanup_provisional(
+        session_uri,
+        provenance_root,
+        agent_uri,
+        attempt_id,
+        ctx,
+        reason
+      )
 
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
-         :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         :ok <- ensure_reusable_agent(agent_uri, role_name),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
+         # The declaration can drift after its installation preflight. Verify
+         # the existing agent still fulfils the complete reuse contract at the
+         # final join boundary; failures become durable unfilled roles rather
+         # than a fatal install or a fresh replacement.
+         :ok <-
+           revalidate_reuse_contract(
+             agent_uri,
+             operator,
+             recipe_name,
+             agent,
+             role_name
+           ),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
          # must never tombstone or overwrite that agent's pre-existing binding.
          {:ok, ^agent_uri} <-
@@ -501,112 +443,116 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              session_uri: session_uri,
              in_session_template: true
            ),
-         :ok <- await_role_membership(session_uri, agent_uri, role_name),
-         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe),
+         :ok <-
+           DefinitionAgentLifecycle.await_role_membership(session_uri, agent_uri, role_name),
+         {:ok, _binding} <-
+           DefinitionAgentLifecycle.bind_recipe_caps(agent_uri, recipe_name, recipe),
          :ok <- RecipeCapBinding.sync_live(agent_uri) do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
+      {:skip, _reason} = skip -> skip
       {:error, _} = error -> error
       other -> {:error, {:reuse_agent_join_failed, role_name, other}}
     end
   end
 
-  defp maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
-    # Session role agents are created on behalf of the session owner,
-    # not through Workspace.AgentCreate. Grant the same instance-scoped
-    # Manage authority that a direct creator receives: it authorizes the
-    # owner to read and type in the agent's PTY, including an initial
-    # `codex login` / `claude /login` before credentials exist.
-    with :ok <-
-           Materializer.grant_owner_participant_teardown_cap(
-             agent_uri,
-             granted_by,
-             workspace_uri
-           ) do
-      maybe_after_orchestrator_materialize(
-        session_uri,
-        workspace_uri,
-        granted_by,
-        agent,
-        agent_uri
-      )
+  defp ensure_reusable_agent(agent_uri, role_name) do
+    case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
+      {:ok, _live_or_rehydrated} -> :ok
+      {:error, reason} -> {:skip, {:reuse_agent_unavailable, role_name, reason}}
     end
   end
 
-  defp maybe_after_orchestrator_materialize(
-         session_uri,
-         workspace_uri,
-         granted_by,
-         agent,
-         agent_uri
-       ) do
-    if orchestrator_recipe_slot?(agent) do
-      parent_template_uri = parent_template_uri_for(session_uri)
+  defp revalidate_reuse_contract(agent_uri, operator, _recipe_name, agent, role_name) do
+    reason =
+      cond do
+        Ezagent.UriQuery.resolve(:flavor, agent_uri) != {:ok, flavor_of(agent)} ->
+          :flavor_mismatch
 
-      # Ordering (R2 + R3 + P1):
-      #   1. verify the durable binding pre-stored before spawn still names the
-      #      ACTUAL spawned agent URI, and obtain its materialization epoch;
-      #   2. register the MCP context BEFORE granting (R3 — the readiness/
-      #      tool-surface registration must precede the grant, not follow it).
-      #   3. grant the orchestrator's scope-bounded caps LAST.
-      with {:ok, binding} <- Materializer.ensure_orchestrator_binding(session_uri, agent_uri),
-           :ok <-
-             SessionOrchestrator.register_orchestrator_mcp_context(
-               agent_uri,
-               session_uri,
-               workspace_uri,
-               granted_by,
-               parent_template_uri,
-               binding.epoch
-             ),
-           :ok <-
-             SessionOrchestrator.grant_orchestrator_scoped_caps(
-               agent_uri,
-               session_uri,
-               granted_by
-             ) do
-        :ok
+        not Ezagent.Identity.Authority.manages?(operator, agent_uri) ->
+          :unauthorized
+
+        provider_profile_mismatch?(agent_uri, agent) ->
+          :provider_profile_mismatch
+
+        not credential_eligible?(agent_uri, operator, agent) ->
+          :ineligible_credential_status
+
+        true ->
+          :ok
       end
-    else
-      :ok
+
+    case reason do
+      :ok -> :ok
+      reason -> {:skip, {:reuse_agent_revalidation_failed, role_name, reason}}
     end
   end
 
-  defp orchestrator_recipe_slot?(agent) do
-    role_name_of(agent) == "orchestrator" and lookup_ref(recipe_of(agent)) == "orchestrator"
+  defp credential_eligible?(agent_uri, operator, agent) do
+    case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{
+           caller: operator,
+           authenticated_principal: operator
+         }) do
+      {:ok, %{status: status}} -> credential_status_eligible?(flavor_of(agent), status)
+      _ -> false
+    end
   end
 
-  defp parent_template_uri_for(%URI{} = session_uri) do
-    case SessionOrchestrator.read_template_working_copy(session_uri) do
-      %{session_template_uri: %URI{} = uri} ->
-        uri
+  defp credential_status_eligible?(flavor, status) do
+    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+      {:ok, %{template_class: template_class}} when is_atom(template_class) ->
+        credentialled? =
+          Ezagent.Agent.CredentialAdapter.credentialled?(template_class) or
+            Ezagent.Agent.CredentialSliceAdapter.credentialled?(template_class)
 
-      %{"session_template_uri" => %URI{} = uri} ->
-        uri
-
-      %{session_template_uri: uri} when is_binary(uri) and uri != "" ->
-        Ezagent.URI.new!(uri)
-
-      %{"session_template_uri" => uri} when is_binary(uri) and uri != "" ->
-        Ezagent.URI.new!(uri)
+        if credentialled?, do: status in [:authenticated, :expiring], else: status == :n_a
 
       _ ->
-        Ezagent.URI.template(:system, :session, "default")
-    end
-  rescue
-    _ -> Ezagent.URI.template(:system, :session, "default")
-  end
-
-  defp ensure_reuse_recipe_match(%URI{} = agent_uri, recipe_name, role_name) do
-    case agent_recipe(agent_uri) do
-      {:ok, ^recipe_name} -> :ok
-      _ -> {:error, {:reuse_agent_recipe_mismatch, role_name, agent_uri}}
+        false
     end
   end
 
-  defp agent_recipe(%URI{} = agent_uri),
-    do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
+  defp provider_profile_mismatch?(agent_uri, agent) do
+    case declared_provider_profile(agent) do
+      nil -> false
+      expected -> agent_provider_profile(agent_uri) != expected
+    end
+  end
+
+  defp declared_provider_profile(agent) do
+    provider_of(agent) ||
+      agent
+      |> role_config()
+      |> then(fn config -> Map.get(config, :provider) || Map.get(config, "provider") end)
+  end
+
+  defp agent_provider_profile(agent_uri) do
+    sandbox = read_reuse_slice(agent_uri, :sandbox)
+    state = Map.get(sandbox, :state) || Map.get(sandbox, "state") || sandbox
+
+    case Map.get(state, :respawn_template_data) || Map.get(state, "respawn_template_data") do
+      data when is_map(data) ->
+        Map.get(data, :provider) || Map.get(data, "provider")
+
+      _ ->
+        curl = read_reuse_slice(agent_uri, :curl_agent)
+        Map.get(curl, :provider) || Map.get(curl, "provider")
+    end
+  end
+
+  defp read_reuse_slice(agent_uri, slice_key) do
+    case Ezagent.Kind.read(agent_uri, slice_key, spawn: :never) do
+      {:ok, slice} when is_map(slice) ->
+        slice
+
+      _ ->
+        case Ezagent.Kind.read_durable(agent_uri, slice_key) do
+          {:ok, slice, _meta} when is_map(slice) -> slice
+          _ -> %{}
+        end
+    end
+  end
 
   defp reuse_caps(%URI{} = session_uri, %URI{} = operator) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
@@ -619,229 +565,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   # --- resolve --------------------------------------------------------------
 
-  defp lookup_recipe(%URI{} = workspace_uri, recipe_name) do
-    case RecipeRegistry.lookup(URI.to_string(workspace_uri), recipe_name) do
-      {:ok, recipe} -> {:ok, recipe}
-      :error -> {:error, {:unknown_agent_recipe, recipe_name}}
-    end
-  end
-
   # T1 rebase reconciliation: recipe subjects are the structured `recipe:<name>`
   # form (T1 project B). `RecipeRegistry.lookup/2` takes a PLAIN recipe name and
   # re-derives the `recipe:<name>` subject internally, and the same plain name is
   # reused as the AgentTemplate name — so normalize a single leading `recipe:`
   # prefix here so both a bare `guide` and a prefixed `recipe:guide` in role
   # slots resolve identically. Idempotent: strips at most one prefix.
-  defp lookup_ref("recipe:" <> rest) when rest != "", do: rest
-  defp lookup_ref(name), do: name
-
-  # --- spawn + join ---------------------------------------------------------
-
-  # Spawn only. Binding and joining follow after the target has materialized.
-  defp spawn_agent(
-         workspace_uri,
-         granted_by,
-         planned_uri,
-         recipe,
-         recipe_name,
-         role_name,
-         flavor,
-         provider
-       ) do
-    source_template_uri = Ezagent.URI.template(:system, :agent, recipe_name)
-
-    spawn_opts = %{
-      recipe: recipe,
-      recipe_name: recipe_name,
-      role_name: role_name,
-      flavor: flavor,
-      agent_uri: planned_uri,
-      workspace_uri: workspace_uri,
-      owner_uri: granted_by,
-      caller: granted_by,
-      authenticated_principal: granted_by,
-      caps: SessionCreator.list_caps_for_materialization(granted_by),
-      source_template_uri: source_template_uri,
-      description: @agent_description,
-      template_content_overrides: %{
-        credential_optional: true,
-        session_template_member: true
-      }
-    }
-
-    # The cc-custom seam: the role slot's selected backend profile rides into
-    # the materialized content's `provider` — only when the slot declares one
-    # (plain-cc/legacy slots keep the byte-unchanged opts map).
-    spawn_opts =
-      case provider do
-        p when is_binary(p) and p != "" -> Map.put(spawn_opts, :provider, p)
-        _ -> spawn_opts
-      end
-
-    case RecipeMaterializer.create_agent_from_recipe(spawn_opts) do
-      {:ok, {:created, fresh_receipt}} ->
-        {:ok, fresh_receipt}
-
-      {:ok, :already_present} ->
-        {:error, {:agent_spawn_failed, role_name, :agent_uri_already_live}}
-
-      {:error, reason} ->
-        {:error, {:agent_spawn_failed, role_name, reason}}
-    end
-  end
-
-  # Faceted `session.join` carrying the `%{role_name: name}` facet. The caller
-  # owns receipt-based compensation for every failure after a fresh spawn.
-  defp join_or_cleanup(session_uri, %URI{} = member_uri, role_name, recipe)
-       when is_map(recipe) do
-    if passive_recipe?(recipe) do
-      :ok
-    else
-      do_join(session_uri, member_uri, role_name)
-    end
-  end
-
-  defp do_join(session_uri, %URI{} = member_uri, role_name) do
-    case join_member(session_uri, member_uri, role_name) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        {:error, {:agent_join_failed, role_name, reason}}
-    end
-  end
-
-  defp maybe_await_role_member(session_uri, member_uri, role_name, recipe)
-       when is_map(recipe) do
-    if passive_recipe?(recipe) do
-      :ok
-    else
-      await_role_membership(session_uri, member_uri, role_name)
-    end
-  end
-
-  defp await_role_membership(session_uri, planned_uri, role_name) do
-    case await_role_member(session_uri, planned_uri, role_name) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        {:error, {:agent_membership_convergence_failed, role_name, reason}}
-    end
-  end
-
-  defp await_role_member(session_uri, planned_uri, role_name, attempts \\ @role_member_attempts)
-
-  defp await_role_member(_session_uri, _planned_uri, _role_name, 0),
-    do: {:error, :membership_convergence_timeout}
-
-  defp await_role_member(session_uri, planned_uri, role_name, attempts) do
-    if Members.role_name_to_uri(read_members(session_uri), role_name) == planned_uri do
-      :ok
-    else
-      Process.sleep(@role_member_poll_ms)
-      await_role_member(session_uri, planned_uri, role_name, attempts - 1)
-    end
-  end
-
-  defp join_member(%URI{} = session_uri, %URI{} = member_uri, role_name) do
-    _ = Ezagent.Domain.Agent.ensure_declared_member(member_uri)
-    target = Ezagent.URI.with_action(session_uri, :session, :join)
-    admin = Ezagent.Entity.User.admin_uri()
-
-    result =
-      with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{member: member_uri, role_name: role_name},
-          ctx: %{
-            caller: admin,
-            authenticated_principal: admin,
-            caps: MapSet.new([cap]),
-            reply: {:caller_inbox, self()}
-          },
-          origin: :trusted_internal
-        })
-      end
-
-    case result do
-      {:ok, %{status: status, member: ^member_uri}}
-      when status in [:granted, :already_member] ->
-        :ok
-
-      {:ok, %{status: :pending, member: ^member_uri}} ->
-        {:error, :admission_pending}
-
-      {:error, reason} ->
-        {:error, reason}
-
-      other ->
-        {:error, {:unexpected_join_result, other}}
-    end
-  end
-
-  # --- durable recipe-cap binding -------------------------------------------
-
-  defp refresh_existing_binding(workspace_uri, agent_uri, recipe_name, role_name) do
-    with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-         {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe),
-         :ok <- RecipeCapBinding.sync_live(agent_uri) do
-      :ok
-    else
-      {:error, reason} -> {:error, {:agent_recipe_binding_refresh_failed, role_name, reason}}
-    end
-  end
-
-  defp bind_recipe_caps(%URI{} = agent_uri, recipe_name, recipe) do
-    issuer = Ezagent.Entity.User.admin_uri()
-
-    with {:ok, proposals} <-
-           GrantRecipeCaps.propose_recipe_caps(agent_uri, recipe, @telemetry_prefix),
-         {:ok, binding} <-
-           RecipeCapBinding.issue_and_upsert(agent_uri, recipe_name, issuer, proposals) do
-      {:ok, binding}
-    else
-      {:error, reason} -> {:error, {:agent_bind_recipe_caps_failed, reason}}
-    end
-  end
-
-  defp rollback_failed_fresh(
-         {:error, reason} = original_error,
-         session_uri,
-         agent_uri,
-         fresh_receipt,
-         binding_version
-       ) do
-    with {:ok, :retired} <-
-           RecipeMaterializer.rollback_fresh_agent(fresh_receipt, binding_version),
-         :ok <- remove_fresh_member(session_uri, agent_uri) do
-      original_error
-    else
-      {:error, rollback_reason} ->
-        {:error, {reason, {:rollback_failed, rollback_reason}}}
-    end
-  end
-
-  defp remove_fresh_member(%URI{} = session_uri, %URI{} = agent_uri) do
-    admin = Ezagent.Entity.User.admin_uri()
-    target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
-
-    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target),
-         {:ok, result} <-
-           SessionParticipants.remove_participant(session_uri, agent_uri, %{
-             caller: admin,
-             authenticated_principal: admin,
-             caps: MapSet.new([cap])
-           }) do
-      case result do
-        :already_removed -> :ok
-        %{status: :removed} -> :ok
-        other -> {:error, {:unexpected_failed_member_removal, other}}
-      end
-    end
-  end
-
   # --- helpers --------------------------------------------------------------
 
   @doc """
@@ -849,11 +578,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   role data; the runtime chooses a UUID instance URI at materialization time.
   """
   @spec planned_agent_uri(URI.t()) :: URI.t()
-  def planned_agent_uri(%URI{} = workspace_uri) do
-    workspace_uri
-    |> Ezagent.URI.workspace_name!()
-    |> Ezagent.URI.agent(Ecto.UUID.generate())
-  end
+  def planned_agent_uri(%URI{} = workspace_uri),
+    do:
+      EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentSupport.planned_agent_uri(
+        workspace_uri
+      )
 
   defp planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
     if orchestrator_recipe_slot?(agent) do
@@ -891,21 +620,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     Ezagent.URI.agent(Ezagent.URI.workspace_name!(workspace_uri), "sw-data-#{digest}")
   end
 
-  defp passive_recipe?(recipe),
-    do: Map.get(recipe, :passive, Map.get(recipe, "passive", false)) == true
-
   defp existing_member_for_role(%URI{} = session_uri, role_name) do
-    Members.role_name_to_uri(read_members(session_uri), role_name)
-  end
-
-  defp read_members(%URI{} = session_uri) do
-    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
-      {:ok, chat_slice} ->
-        Map.get(chat_slice, :members, %{})
-
-      {:error, _reason} ->
-        %{}
-    end
+    Members.role_name_to_uri(DefinitionAgentLifecycle.read_members(session_uri), role_name)
   end
 
   defp valid_agent?(%{} = agent) do
@@ -914,17 +630,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp valid_agent?(_), do: false
-
-  defp recipe_of(agent), do: Map.get(agent, :recipe) || Map.get(agent, "recipe")
-  defp role_name_of(agent), do: Map.get(agent, :role_name) || Map.get(agent, "role_name")
-
-  defp install_mode_of(agent) do
-    case Map.get(agent, :install_mode) || Map.get(agent, "install_mode") || Map.get(agent, :mode) ||
-           Map.get(agent, "mode") do
-      mode when mode in [:reuse, "reuse"] -> :reuse
-      _ -> :fresh
-    end
-  end
 
   defp reuse_agent_uri_of(agent) do
     case Map.get(agent, :reuse_agent_uri) || Map.get(agent, "reuse_agent_uri") ||
@@ -937,37 +642,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     ArgumentError -> nil
   end
 
-  defp flavor_of(agent) do
-    case Map.get(agent, :flavor) || Map.get(agent, "flavor") do
-      flavor when is_binary(flavor) and flavor != "" -> flavor
-      _ -> "cc"
-    end
+  defp maybe_clear_admission(session_uri, agent) do
+    if credential_admission_of(agent) == :before_session_join,
+      do: AgentAdmission.clear(session_uri, agent),
+      else: :ok
   end
 
   # The role slot's OPTIONAL cc-custom backend profile (atom or string key).
   # Absent/empty → nil: plain-cc and legacy slots carry no profile, and the
   # credential seams below must see NO opt at all (byte-unchanged behavior).
-  defp provider_of(agent) do
-    case Map.get(agent, :provider) || Map.get(agent, "provider") do
-      provider when is_binary(provider) and provider != "" -> provider
-      _ -> nil
-    end
-  end
-
-  defp role_config(agent) do
-    case map_field(agent, :config) do
-      config when is_map(config) -> config
-      _ -> %{}
-    end
-  end
-
-  defp merge_role_config(recipe, config) when is_map(recipe) and is_map(config) do
-    base =
-      case map_field(recipe, :config) do
-        current when is_map(current) -> current
-        _ -> %{}
-      end
-
-    Map.put(recipe, :config, Map.merge(base, config))
-  end
 end
