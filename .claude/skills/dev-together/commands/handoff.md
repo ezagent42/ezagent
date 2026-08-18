@@ -2,8 +2,9 @@
 
 Generate the day's handoffs — **in parallel**, one per task in `plan.md`.
 
-**Delegate to:** **superpowers:brainstorming** (design each task) + **codex-rescue**
-(static-only adversarial review).
+**Delegate to:** **superpowers:brainstorming** (design each task) + **omp codex
+review** (static-only adversarial review — see
+[../references/codex-review.md](../references/codex-review.md)).
 
 **Do (per task, parallelized — a subagent per task):**
 0. **Build vs research (the clarify front-phase, tiering).** First decide: does the
@@ -27,7 +28,8 @@ Generate the day's handoffs — **in parallel**, one per task in `plan.md`.
 3. Author the handoff from [../references/handoff-template.md](../references/handoff-template.md),
    applying [../references/handoff-standard.md](../references/handoff-standard.md)
    (DoD = demonstrable artifact; discuss-first; defer rules; per-task-branch merge).
-4. **Adversarial review:** Claude self-review + a **codex-rescue** static pass —
+4. **Adversarial review:** Claude self-review + an **omp codex review** static
+   pass ([../references/codex-review.md](../references/codex-review.md)) —
    each told to *attack the design*, not proofread. Incorporate findings; a
    handoff ships only after it survives review.
 5. Save to `docs/together/<date>/handoffs/<task>.md` and emit a **paste-ready dev

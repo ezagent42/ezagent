@@ -47,7 +47,7 @@ Also trigger on natural phrasings like:
 
 This is the glue around the mature skills (superpowers:brainstorming,
 superpowers:writing-plans, superpowers:executing-plans /
-subagent-driven-development, codex-rescue review). Load it before any step so
+subagent-driven-development, omp codex review). Load it before any step so
 the cadence, roles, `docs/together/<date>/` artifact layout, handoff standard
 (demonstrable DoD), conflict avoidance, and per-task-branch merge model are
 applied consistently.
@@ -67,7 +67,9 @@ standard + conflict/merge management:
 - shape a design → **superpowers:brainstorming**
 - break work into steps → **superpowers:writing-plans**
 - execute a handoff → **superpowers:executing-plans** / **superpowers:subagent-driven-development**
-- adversarial review → **codex-rescue** (static-only, no `mix`)
+- adversarial review → **omp codex review** (static-only, no `mix` — see
+  [references/codex-review.md](references/codex-review.md); supersedes the
+  `codex-rescue`/`codex-cc-plugin` path, which is deprecated but not yet removed)
 - project rules → **ezagent-developer**, **ezagent-socialware**, `docs/guide/world-coordination.md`
 
 ## Roles
